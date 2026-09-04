@@ -1,0 +1,3 @@
+# Alembic migration versions directory.
+# Migration files are generated here by: uv run alembic revision --autogenerate -m "description"
+# Apply with: uv run alembic upgrade head

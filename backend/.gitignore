@@ -1,0 +1,57 @@
+# Node
+node_modules/
+.next/
+dist/
+.pnpm-store/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+.eggs/
+
+# Type checking / linting caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Env files
+.env
+.env.local
+!.env.example
+!.env.local.example
+!backend/.env.example
+
+# Build artifacts
+build/
+out/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Artifact output dirs (screenshots, saved HTML, resumes)
+artifacts/
+screenshots/
+saved_html/
+resumes/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+
+.env

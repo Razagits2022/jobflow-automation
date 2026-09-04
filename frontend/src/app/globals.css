@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  /* Accent (single accent color) */
+  --color-accent: #F2661F;
+  --color-accent-hover: #D9560F;
+  --color-accent-soft: #FEEEE4;      /* soft peach fills, icon backgrounds */
+
+  /* Surfaces */
+  --color-canvas: #FFFFFF;           /* page background */
+  --color-cream: #FDF6F0;            /* warm section background, used sparingly */
+  --color-navy: #131A28;            /* the one dark closing section */
+  --color-navy-card: #1B2333;       /* cards inside the dark section */
+
+  /* Text */
+  --color-ink: #14181F;             /* headings */
+  --color-body: #545B66;            /* paragraph text */
+  --color-muted: #8A909B;           /* small labels, eyebrows, stat captions */
+
+  /* Lines */
+  --color-line: #ECEBE8;            /* card borders, dividers on light */
+  --color-line-dark: #2A3346;       /* dividers on the dark section */
+
+  /* Radius */
+  --radius-card: 16px;
+  --radius-pill: 9999px;
+
+  /* Shadow */
+  --shadow-card: 0 10px 30px -12px rgba(20, 24, 31, 0.10);
+  --shadow-soft: 0 4px 16px -8px rgba(20, 24, 31, 0.08);
+
+  /* Fonts (wired in layout.tsx below) */
+  --font-display: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background-color: var(--color-canvas);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}

@@ -1,0 +1,101 @@
+"""Async SQLAlchemy engine and session factory.
+
+Import ``AsyncSessionLocal`` to create database sessions.
+In FastAPI routes, use the ``get_db`` dependency from ``app.api.deps``.
+"""
+
+from __future__ import annotations
+
+import ssl
+from typing import Any
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
+
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from app.core.config import settings
+
+
+def normalize_asyncpg_url(raw_url: str) -> tuple[str, dict[str, Any]]:
+    """Normalize a database URL for asyncpg and prepare connect_args with SSL.
+
+    1. Normalizes scheme: replace 'postgresql://' and 'postgres://' with 'postgresql+asyncpg://'.
+    2. Strips 'sslmode' query param from the URL; asyncpg does not parse it.
+    3. Creates an ssl.create_default_context() with check_hostname=False and
+       verify_mode=ssl.CERT_NONE (Supabase pooler certs fail strict verification on Windows).
+    4. Returns tuple of (normalized_url, {"ssl": ctx}).
+    """
+    parsed = urlsplit(raw_url)
+
+    # Normalize scheme to postgresql+asyncpg
+    scheme = parsed.scheme
+    if scheme in ("postgresql", "postgres", "postgresql+asyncpg"):
+        scheme = "postgresql+asyncpg"
+
+    # Strip sslmode from query parameters
+    query_params = parse_qs(parsed.query, keep_blank_values=True)
+    query_params.pop("sslmode", None)
+    clean_query = urlencode(query_params, doseq=True)
+
+    normalized_url = urlunsplit(
+        (
+            scheme,
+            parsed.netloc,
+            parsed.path,
+            clean_query,
+            parsed.fragment,
+        )
+    )
+
+    # Supabase pooler requires TLS, but cert chain fails strict verification on Windows
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    connect_args: dict[str, Any] = {"ssl": ctx}
+
+    return normalized_url, connect_args
+
+
+url, connect_args = normalize_asyncpg_url(settings.database_url)
+
+# ---------------------------------------------------------------------------
+# Engine — Session mode (port 5432, recommended for persistent backend):
+# Supports normal connection pooling and prepared statements.
+# ---------------------------------------------------------------------------
+engine: AsyncEngine = create_async_engine(
+    url,
+    connect_args=connect_args,
+    echo=settings.app_env == "development",
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,
+)
+
+# ---------------------------------------------------------------------------
+# Alternative: Transaction mode (port 6543)
+# If ever switching to Transaction mode (PgBouncer pooler):
+#
+#   from sqlalchemy.pool import NullPool
+#   engine = create_async_engine(
+#       _clean_db_url,
+#       poolclass=NullPool,
+#       connect_args={"statement_cache_size": 0, "ssl": ssl.create_default_context()},
+#   )
+#
+# Note: advisory locks, prepared statements, and LISTEN/NOTIFY do NOT work in
+# Transaction mode. Session mode (port 5432) or Direct mode is preferred.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Session factory
+# ---------------------------------------------------------------------------
+AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
