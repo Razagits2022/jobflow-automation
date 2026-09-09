@@ -1,14 +1,19 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store";
 import { Card, Button, Field } from "@/components/ui";
-import { Plus, Upload, Trash2, Globe, Sparkles, AlertCircle } from "lucide-react";
+import { Plus, Trash2, Globe, Sparkles, AlertCircle, Loader2 } from "lucide-react";
 
-const EXAMPLE_PLACEHOLDER = `https://careers.pipercompanies.com/details/173312/frontend_software_engineer
-https://www.pensioncareers.co.uk/jobs/11494657/pension-calculation-analyst.asp
-https://www.jobsandcareersmag.com/jobpost/business-development-manager-61/`;
+const SAMPLE_URLS = [
+  "https://gembaadvantage.pinpointhq.com/postings/981eb6db-e973-4776-8545-a6d6344f46cc/applications/new",
+  "https://www.interactconsulting.co.uk/apply-for-azure-devops-engineer-fully-remote-a5742.aspx",
+  "https://searchabilitynsd.co.uk/job/cyber-security-governance-consultant/",
+  "https://jobs.ashbyhq.com/influxdata/3988c197-6cc2-4383-9599-cbdd6a87a73e/application?utm_source=arbeitnow.co.uk&ref=arbeitnow.co.uk",
+];
+
+const EXAMPLE_PLACEHOLDER = SAMPLE_URLS.slice(0, 3).join("\n");
 
 function getDomain(url: string) {
   try {
@@ -28,8 +33,8 @@ export default function ApplyPage() {
   const startApplying = useAppStore((state) => state.startApplying);
 
   const [textareaValue, setTextareaValue] = useState("");
+  const [isAddingUrls, setIsAddingUrls] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadJobs();
@@ -41,42 +46,24 @@ export default function ApplyPage() {
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
 
-    if (lines.length > 0) {
+    if (lines.length === 0 || isAddingUrls) return;
+    setIsAddingUrls(true);
+    try {
       await addJobs(lines);
       setTextareaValue("");
+    } finally {
+      setIsAddingUrls(false);
     }
   };
 
-  const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const text = event.target?.result as string;
-      if (!text) return;
-
-      // Split on newlines, commas, quotes, semicolons
-      const tokens = text.split(/[\r\n,;"']+/);
-      const urlRegex = /(https?:\/\/[^\s]+)/gi;
-      const extractedUrls: string[] = [];
-
-      for (const token of tokens) {
-        const trimmed = token.trim();
-        const matches = trimmed.match(urlRegex);
-        if (matches) {
-          extractedUrls.push(...matches);
-        } else if (trimmed.includes("http://") || trimmed.includes("https://")) {
-          extractedUrls.push(trimmed);
-        }
-      }
-
-      if (extractedUrls.length > 0) {
-        await addJobs(extractedUrls);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = "";
+  const handleQuickLoadSamples = async () => {
+    if (isAddingUrls) return;
+    setIsAddingUrls(true);
+    try {
+      await addJobs(SAMPLE_URLS);
+    } finally {
+      setIsAddingUrls(false);
+    }
   };
 
   const handleStartApplying = async () => {
@@ -89,7 +76,6 @@ export default function ApplyPage() {
       setIsSubmitting(false);
     }
   };
-
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
@@ -123,43 +109,48 @@ export default function ApplyPage() {
         </Field>
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
               variant="secondary"
               size="sm"
               onClick={handleAddTextareaUrls}
-              disabled={!textareaValue.trim()}
-              className="font-semibold"
+              disabled={!textareaValue.trim() || isAddingUrls}
+              className="font-semibold transition-all"
             >
-              <Plus className="w-4 h-4 text-accent" />
-              <span>Add URLs</span>
+              {isAddingUrls ? (
+                <>
+                  <Loader2 className="w-4 h-4 text-accent animate-spin" />
+                  <span>Adding URLs...</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4 text-accent" />
+                  <span>Add URLs</span>
+                </>
+              )}
             </Button>
 
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="px-4 py-2 rounded-pill bg-canvas hover:bg-cream text-body hover:text-ink text-xs font-semibold border border-line flex items-center gap-1.5 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              disabled={isAddingUrls}
+              onClick={handleQuickLoadSamples}
+              className="px-3.5 py-2 rounded-pill bg-accent-soft hover:bg-accent/15 text-accent text-xs font-semibold border border-accent/20 flex items-center gap-1.5 transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+              title="Instantly queue all 10 active sample job links"
             >
-              <Upload className="w-3.5 h-3.5 text-muted" />
-              <span>Upload CSV</span>
+              {isAddingUrls ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 text-accent animate-spin" />
+                  <span>Queueing 10 live jobs...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-accent" />
+                  <span>Queue 10 Live Samples</span>
+                </>
+              )}
             </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv"
-              onChange={handleCsvUpload}
-              className="hidden"
-            />
           </div>
-
-          <button
-            type="button"
-            onClick={() => setTextareaValue(EXAMPLE_PLACEHOLDER)}
-            className="text-xs text-muted hover:text-accent font-medium underline underline-offset-2 cursor-pointer transition-colors"
-          >
-            Insert sample URLs
-          </button>
         </div>
       </Card>
 
@@ -181,7 +172,7 @@ export default function ApplyPage() {
             <AlertCircle className="w-6 h-6 text-muted mx-auto" />
             <p className="text-sm font-medium text-ink">No job URLs in queue</p>
             <p className="text-xs text-muted max-w-sm mx-auto">
-              Paste URLs above or upload a CSV to queue job applications for automated background submission.
+              Paste URLs above or click Queue 9 Live Samples to queue job applications for automated background submission.
             </p>
           </div>
         ) : (
@@ -229,11 +220,18 @@ export default function ApplyPage() {
             type="button"
             variant="primary"
             size="lg"
-            disabled={jobs.length === 0}
+            disabled={jobs.length === 0 || isSubmitting}
             onClick={handleStartApplying}
-            className="w-full sm:w-auto font-bold shadow-sm"
+            className="w-full sm:w-auto font-bold shadow-sm flex items-center justify-center gap-2"
           >
-            Start applying ({jobs.length})
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-5 h-5 text-white animate-spin" />
+                <span>Starting applications...</span>
+              </>
+            ) : (
+              <span>Start applying ({jobs.length})</span>
+            )}
           </Button>
         </div>
       </div>

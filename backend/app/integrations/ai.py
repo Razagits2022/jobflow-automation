@@ -49,6 +49,7 @@ async def call_ai(
     user_content: str,
     response_model: type[T],
     temperature: float = 0.1,
+    max_tokens: int | None = None,
 ) -> T:
     """Call the AI provider and parse the response into a Pydantic model.
 
@@ -63,6 +64,7 @@ async def call_ai(
         user_content:   The payload to reason about (job text, field list, etc.).
         response_model: Pydantic model to validate/parse the JSON response into.
         temperature:    Sampling temperature (low for deterministic outputs).
+        max_tokens:     Per-call output token limit to control burn rate.
 
     Returns:
         A validated instance of ``response_model``.
@@ -70,8 +72,6 @@ async def call_ai(
     Raises:
         ValidationError: If the model's JSON is invalid after one retry.
         openai.APIError: On API-level failures.
-
-    TODO (Phase 2): add the actual system prompts for analyze_job and map_fields.
     """
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system_prompt},
@@ -79,11 +79,18 @@ async def call_ai(
     ]
 
     for attempt in range(2):  # try once, retry once
-        response = await _client.chat.completions.create(
-            model=settings.active_ai_model,
-            messages=messages,  # type: ignore[arg-type]
-            temperature=temperature,
-        )
+        # Note: Disable thinking mode so reasoning tokens don't exhaust the max_tokens budget.
+        create_kwargs: dict[str, Any] = {
+            "model": settings.active_ai_model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            create_kwargs["max_tokens"] = max_tokens
+        if settings.ai_provider == "deepseek" or "deepseek" in settings.active_ai_model.lower():
+            create_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
+        response = await _client.chat.completions.create(**create_kwargs)
         raw = (response.choices[0].message.content or "").strip()
 
         # Strip markdown code fences if the model wraps JSON in ```json ... ```

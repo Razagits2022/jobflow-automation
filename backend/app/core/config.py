@@ -46,6 +46,10 @@ class Settings(BaseSettings):
             "for Alembic migrations; falls back to database_url when unset."
         ),
     )
+    db_echo: bool = Field(
+        default=False,
+        description="Echo SQL queries in SQLAlchemy engine. Keep False for clean logs.",
+    )
 
     # ---- Redis ----
     redis_url: str = Field(
@@ -66,7 +70,7 @@ class Settings(BaseSettings):
         description="Base URL for DeepSeek's OpenAI-compatible API.",
     )
     deepseek_model: str = Field(
-        default="deepseek-chat",
+        default="deepseek-v4-flash",
         description="DeepSeek model identifier. Override with your paid model.",
     )
 
@@ -80,10 +84,27 @@ class Settings(BaseSettings):
     # ---- Zyte ----
     zyte_api_key: str = Field(default="", description="Zyte API key for page fetching.")
 
-    # ---- Browser ----
+    # ---- CapSolver ----
+    capsolver_api_key: str = Field(
+        default="",
+        description="CapSolver API key for automatic CAPTCHA solving.",
+    )
+
+    # ---- Browser & Network IP ----
     browser_headless: bool = Field(
         default=True,
         description="Run Chromium in headless mode. Set false for local debugging only.",
+    )
+    custom_ip: str = Field(
+        default="",
+        description=(
+            "Custom IP / Proxy address (e.g. '1.2.3.4:8080' or 'http://user:pass@1.2.3.4:8080'). "
+            "Leave empty to use host machine's own direct internet IP."
+        ),
+    )
+    proxy_url: str = Field(
+        default="",
+        description="Alias for custom_ip.",
     )
 
     # ---- Worker ----
@@ -97,6 +118,14 @@ class Settings(BaseSettings):
         description="Playwright navigation timeout in milliseconds.",
         ge=1000,
     )
+
+    # ---- Inter-job Delay ----
+    inter_job_delay_enabled: bool = Field(
+        default=False,
+        description="Space out job runs in production. Keep False in testing.",
+    )
+    inter_job_delay_min_minutes: float = Field(default=5.0)
+    inter_job_delay_max_minutes: float = Field(default=20.0)
 
     # ---- Storage ----
     storage_driver: Literal["local", "s3"] = Field(
@@ -128,6 +157,11 @@ class Settings(BaseSettings):
     def migration_database_url(self) -> str:
         """Return DATABASE_DIRECT_URL if configured, otherwise fallback to DATABASE_URL."""
         return self.database_direct_url or self.database_url
+
+    @property
+    def active_ip_or_proxy(self) -> str:
+        """Return configured custom IP/proxy address, or empty string when using host's own IP."""
+        return (self.custom_ip or self.proxy_url).strip()
 
 
 # Module-level singleton — import this everywhere.

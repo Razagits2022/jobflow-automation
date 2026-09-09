@@ -69,7 +69,7 @@ class FieldResult(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("application_runs.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    field_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    field_label: Mapped[str] = mapped_column(Text, nullable=False)
     mapped_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Status: filled | skipped | failed
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="filled")

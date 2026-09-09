@@ -145,7 +145,6 @@ async def delete_queued_job(
     deleted_count = getattr(result, "rowcount", 0)
 
     if deleted_count == 0:
-
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Queued job '{job_id}' not found.",

@@ -13,8 +13,28 @@ export const apiClient = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
-  timeout: 30_000,
+  timeout: 60_000,
 });
+
+/**
+ * Quick ping to backend /health endpoint to check server availability
+ * and trigger cold-start wakeup on Render free tier.
+ */
+export async function checkServerHealth(timeoutMs = 8_000): Promise<boolean> {
+  try {
+    const res = await axios.get(`${baseURL}/health`, {
+      timeout: timeoutMs,
+      headers: { "Cache-Control": "no-cache" },
+    });
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+export function getApiBaseUrl(): string {
+  return baseURL;
+}
 
 // ---------------------------------------------------------------------------
 // Response interceptor — normalise errors into a consistent shape

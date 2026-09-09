@@ -40,7 +40,6 @@ Extract key structured facts and return ONLY valid JSON matching this schema:
 Do not include any Markdown code fence or explanatory text outside the JSON."""
 
 
-
 def _heuristic_analyze_job(job_text: str) -> JobFacts:
     """Offline heuristic fallback for job facts extraction."""
     lines = [line.strip() for line in job_text.splitlines() if line.strip()]
@@ -98,9 +97,10 @@ async def analyze_job(*, job_text: str) -> JobFacts:
     try:
         facts = await call_ai(
             system_prompt=_ANALYZE_JOB_SYSTEM_PROMPT,
-            user_content=f"Job Posting Text:\n\n{job_text[:8000]}",
+            user_content=f"Job Posting Text:\n\n{job_text[:2500]}",
             response_model=JobFacts,
             temperature=0.1,
+            max_tokens=800,
         )
         return facts
     except Exception as exc:  # noqa: BLE001

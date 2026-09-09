@@ -19,6 +19,7 @@ from playwright.async_api import (
     async_playwright,
 )
 
+from app.automation.proxy import get_playwright_proxy_config, log_network_ip_mode
 from app.core.config import settings
 
 log = structlog.get_logger(__name__)
@@ -46,24 +47,47 @@ async def managed_page() -> AsyncGenerator[tuple[BrowserContext, Page], None]:
     page: Page
 
     async with async_playwright() as playwright:
+        log_network_ip_mode()
+        proxy_config = get_playwright_proxy_config()
         browser = await playwright.chromium.launch(
             headless=settings.browser_headless,
+            proxy=proxy_config,
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
             ],
         )
         context = await browser.new_context(
             viewport={"width": 1280, "height": 900},
             user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) "
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
+                "Chrome/126.0.0.0 Safari/537.36"
             ),
-            # TODO Phase 2: support loading saved cookies / auth state here
+            locale="en-US",
+            timezone_id="America/Chicago",
         )
+        # Apply anti-bot stealth overrides
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            window.chrome = {
+                runtime: {},
+                loadTimes: function() {},
+                csi: function() {},
+                app: {}
+            };
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en']
+            });
+        """)
         page = await context.new_page()
         page.set_default_timeout(settings.nav_timeout_ms)
         log.debug("browser.context_opened")

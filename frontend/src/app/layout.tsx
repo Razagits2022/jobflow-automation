@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope, Inter } from "next/font/google";
 import "./globals.css";
 import { QueryProvider } from "@/lib/query-client";
+import { ServerWarmupProvider } from "@/components/ServerWarmup";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 
 const manrope = Manrope({
@@ -32,8 +33,15 @@ export default function RootLayout({
       lang="en"
       className={`${manrope.variable} ${inter.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col font-sans bg-canvas text-ink">
-        <QueryProvider>{children}</QueryProvider>
+      <body
+        className="min-h-full flex flex-col font-sans bg-canvas text-ink selection:bg-accent selection:text-white"
+        suppressHydrationWarning
+      >
+        <QueryProvider>
+          <ServerWarmupProvider>
+            {children}
+          </ServerWarmupProvider>
+        </QueryProvider>
       </body>
     </html>
   );

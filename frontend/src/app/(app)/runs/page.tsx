@@ -13,6 +13,9 @@ import {
   ExternalLink,
   ShieldAlert,
   Inbox,
+  Maximize2,
+  ZoomIn,
+  X,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -27,6 +30,57 @@ function getDomain(url: string) {
   }
 }
 
+function formatFieldLabel(raw: string): string {
+  if (!raw) return "Field";
+  if (raw.startsWith("[data-jf-id")) return "Consent / Site Cookies";
+  let s = raw
+    .replace(/^#/, "")
+    .replace(/^input\[name="/i, "")
+    .replace(/"\]$/i, "")
+    .replace(/\[/g, " ")
+    .replace(/\]/g, " ")
+    .replace(/application_form_application_/gi, "")
+    .replace(/application_form_/gi, "")
+    .replace(/equality_monitoring_/gi, "")
+    .replace(/_text_answer/gi, "")
+    .replace(/_boolean_answer/gi, "")
+    .replace(/_attributes_\d+/gi, "")
+    .replace(/_attributes_/gi, " ")
+    .replace(/_/g, " ")
+    .replace(/\\/g, "")
+    .trim();
+
+  if (s.length > 3 && s[0] === s[0].toUpperCase() && !s.includes("_")) {
+    return s;
+  }
+
+  return s
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function formatFieldValue(val: string) {
+  if (val === "true") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+        Yes
+      </span>
+    );
+  }
+  if (val === "false") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-cream text-muted border border-line">
+        No
+      </span>
+    );
+  }
+  if (!val || val.toLowerCase() === "none" || val === "null") {
+    return <span className="text-muted italic">—</span>;
+  }
+  return <span className="break-words font-medium text-ink">{val}</span>;
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function RunsPage() {
@@ -36,6 +90,7 @@ export default function RunsPage() {
 
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [expandedRunIds, setExpandedRunIds] = useState<Record<string, boolean>>({});
+  const [previewModal, setPreviewModal] = useState<{ url: string; title: string } | null>(null);
 
   // Initial load and polling
   useEffect(() => {
@@ -255,20 +310,25 @@ export default function RunsPage() {
                       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
                         {/* 2-Column Table of Form Fields */}
                         <div className="md:col-span-7 space-y-2">
-                          <span className="text-xs font-bold text-ink uppercase tracking-wider block">
-                            Form Fields Auto-Filled
-                          </span>
-                          <div className="rounded-lg border border-line bg-canvas overflow-hidden text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-ink uppercase tracking-wider block">
+                              Form Fields Auto-Filled
+                            </span>
+                            <span className="text-[11px] font-semibold text-muted bg-canvas border border-line px-2 py-0.5 rounded">
+                              {run.fields ? `${run.fields.length} fields` : "0 fields"}
+                            </span>
+                          </div>
+                          <div className="rounded-lg border border-line bg-canvas overflow-hidden text-xs max-h-80 overflow-y-auto">
                             <table className="w-full text-left">
                               <tbody className="divide-y divide-line">
                                 {run.fields && run.fields.length > 0 ? (
                                   run.fields.map((field) => (
-                                    <tr key={field.label} className="hover:bg-cream/40">
-                                      <td className="px-3 py-2 font-medium text-muted w-2/5">
-                                        {field.label}
+                                    <tr key={field.label} className="hover:bg-cream/40 transition-colors">
+                                      <td className="px-3 py-2 font-medium text-body w-1/2">
+                                        {formatFieldLabel(field.label)}
                                       </td>
-                                      <td className="px-3 py-2 font-semibold text-ink">
-                                        {field.value}
+                                      <td className="px-3 py-2 text-ink">
+                                        {formatFieldValue(field.value)}
                                       </td>
                                     </tr>
                                   ))
@@ -286,28 +346,56 @@ export default function RunsPage() {
 
                         {/* Confirmation Screenshot Proof */}
                         <div className="md:col-span-5 space-y-2">
-                          <span className="text-xs font-bold text-ink uppercase tracking-wider block">
-                            Submission Proof
-                          </span>
-                          <div className="rounded-lg border border-line bg-canvas p-2 flex flex-col items-center justify-center text-center space-y-2 aspect-[4/3] overflow-hidden relative">
-                            {/* Attempt to load real screenshot */}
-                            <img
-                              src={`${API_BASE_URL}/api/runs/${run.id}/screenshot`}
-                              alt="Submission Proof"
-                              className="w-full h-full object-cover rounded-md"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLElement).style.display = "none";
-                              }}
-                            />
-                            <div className="flex flex-col items-center justify-center p-4">
-                              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center mb-1">
-                                <ImageIcon className="w-5 h-5" />
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-ink uppercase tracking-wider block">
+                              Submission Proof
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewModal({
+                                  url: `${API_BASE_URL}/api/runs/${run.id}/screenshot`,
+                                  title: `Submission Proof — ${getDomain(run.url)}`,
+                                })
+                              }
+                              className="text-[11px] font-semibold text-brand hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <Maximize2 className="w-3 h-3" />
+                              View Full Size
+                            </button>
+                          </div>
+                          <div
+                            onClick={() =>
+                              setPreviewModal({
+                                url: `${API_BASE_URL}/api/runs/${run.id}/screenshot`,
+                                title: `Submission Proof — ${getDomain(run.url)}`,
+                              })
+                            }
+                            className="rounded-lg border border-line bg-canvas overflow-hidden relative group cursor-pointer hover:border-brand/60 shadow-sm transition-all"
+                          >
+                            <div className="relative w-full h-56 bg-stone-100 flex items-center justify-center overflow-hidden">
+                              <img
+                                src={`${API_BASE_URL}/api/runs/${run.id}/screenshot`}
+                                alt="Submission Proof"
+                                className="w-full h-full object-contain object-top transition-transform duration-200 group-hover:scale-[1.01]"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLElement).style.display = "none";
+                                }}
+                              />
+                              <div className="absolute inset-0 bg-ink/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-semibold text-xs backdrop-blur-[1px]">
+                                <ZoomIn className="w-4 h-4" />
+                                <span>Click to inspect snapshot</span>
                               </div>
-                              <span className="text-xs font-bold text-ink">
-                                Confirmation screenshot
-                              </span>
+                            </div>
+                            <div className="p-3 bg-canvas border-t border-line flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2 text-emerald-700 font-semibold">
+                                <div className="w-6 h-6 rounded-lg bg-emerald-50 flex items-center justify-center">
+                                  <ImageIcon className="w-3.5 h-3.5" />
+                                </div>
+                                <span>Confirmed Proof</span>
+                              </div>
                               <span className="text-[11px] text-muted">
-                                Proof ID #{run.id.slice(-6)} verified
+                                #{run.id.slice(-6)}
                               </span>
                             </div>
                           </div>
@@ -335,34 +423,63 @@ export default function RunsPage() {
                                   : "Submission Error"}
                               </span>
                             </div>
-                            <p className="text-body leading-relaxed">
+                            <p className="text-body leading-relaxed break-words">
                               {run.errorReason || "An unhandled portal validation failure occurred."}
                             </p>
                           </div>
                         </div>
 
                         <div className="md:col-span-5 space-y-2">
-                          <span className="text-xs font-bold text-ink uppercase tracking-wider block">
-                            Diagnostic Snapshot
-                          </span>
-                          <div className="rounded-lg border border-line bg-canvas p-2 flex flex-col items-center justify-center text-center space-y-2 aspect-[4/3] overflow-hidden relative">
-                            <img
-                              src={`${API_BASE_URL}/api/runs/${run.id}/screenshot`}
-                              alt="Failure Snapshot"
-                              className="w-full h-full object-cover rounded-md"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLElement).style.display = "none";
-                              }}
-                            />
-                            <div className="flex flex-col items-center justify-center p-4">
-                              <div className="w-10 h-10 rounded-xl bg-red-50 text-red-700 flex items-center justify-center mb-1">
-                                <ImageIcon className="w-5 h-5" />
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-ink uppercase tracking-wider block">
+                              Diagnostic Snapshot
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewModal({
+                                  url: `${API_BASE_URL}/api/runs/${run.id}/screenshot`,
+                                  title: `Diagnostic Snapshot — ${getDomain(run.url)}`,
+                                })
+                              }
+                              className="text-[11px] font-semibold text-brand hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <Maximize2 className="w-3 h-3" />
+                              View Full Size
+                            </button>
+                          </div>
+                          <div
+                            onClick={() =>
+                              setPreviewModal({
+                                url: `${API_BASE_URL}/api/runs/${run.id}/screenshot`,
+                                title: `Diagnostic Snapshot — ${getDomain(run.url)}`,
+                              })
+                            }
+                            className="rounded-lg border border-line bg-canvas overflow-hidden relative group cursor-pointer hover:border-red-400 shadow-sm transition-all"
+                          >
+                            <div className="relative w-full h-56 bg-stone-100 flex items-center justify-center overflow-hidden">
+                              <img
+                                src={`${API_BASE_URL}/api/runs/${run.id}/screenshot`}
+                                alt="Failure Snapshot"
+                                className="w-full h-full object-contain object-top transition-transform duration-200 group-hover:scale-[1.01]"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLElement).style.display = "none";
+                                }}
+                              />
+                              <div className="absolute inset-0 bg-ink/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-semibold text-xs backdrop-blur-[1px]">
+                                <ZoomIn className="w-4 h-4" />
+                                <span>Click to inspect error page</span>
                               </div>
-                              <span className="text-xs font-bold text-ink">
-                                Diagnostic screenshot
-                              </span>
+                            </div>
+                            <div className="p-3 bg-canvas border-t border-line flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-2 text-red-700 font-semibold">
+                                <div className="w-6 h-6 rounded-lg bg-red-50 flex items-center justify-center">
+                                  <ImageIcon className="w-3.5 h-3.5" />
+                                </div>
+                                <span>Error Captured</span>
+                              </div>
                               <span className="text-[11px] text-muted">
-                                Saved for inspection
+                                #{run.id.slice(-6)}
                               </span>
                             </div>
                           </div>
@@ -393,6 +510,56 @@ export default function RunsPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Full-Resolution Screenshot Lightbox Modal */}
+      {previewModal && (
+        <div
+          className="fixed inset-0 z-50 bg-ink/80 backdrop-blur-sm flex flex-col items-center justify-center p-3 sm:p-6 animate-in fade-in duration-150"
+          onClick={() => setPreviewModal(null)}
+        >
+          <div
+            className="bg-canvas border border-line rounded-xl shadow-2xl max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-line bg-cream/40">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-brand" />
+                <span className="text-sm font-bold text-ink truncate max-w-lg">
+                  {previewModal.title}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewModal.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-ink bg-white border border-line hover:bg-cream transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Open Raw Image
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewModal(null)}
+                  className="p-1.5 rounded-lg text-muted hover:text-ink hover:bg-line/50 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Scrollable Image Body */}
+            <div className="flex-1 overflow-auto p-4 bg-stone-100 flex items-start justify-center">
+              <img
+                src={previewModal.url}
+                alt="Full application screenshot proof"
+                className="max-w-full h-auto rounded shadow-sm border border-line"
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

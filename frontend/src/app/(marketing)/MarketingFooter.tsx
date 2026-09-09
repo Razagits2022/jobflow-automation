@@ -4,9 +4,10 @@ import { Logo } from "@/components/ui/Logo";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 
 const FOOTER_LINKS = [
-  { label: "Product", href: "#features" },
   { label: "How it works", href: "#how-it-works" },
-  { label: "Pricing", href: "#pricing" },
+  { label: "Why JobFlow", href: "#why-jobflow" },
+  { label: "Supported ATS", href: "#features" },
+  { label: "FAQ", href: "#faq" },
   { label: "Contact", href: "mailto:support@jobflow.ai" },
 ];
 

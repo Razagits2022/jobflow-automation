@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import { Container } from "@/components/ui/Container";
 import { Logo } from "@/components/ui/Logo";
 import {
@@ -48,7 +48,7 @@ const CHIPS = [
 
 export function CoverageSection() {
   return (
-    <section id="features" className="py-16 sm:py-24 bg-cream/30 border-y border-line scroll-mt-20">
+    <section id="features" className="py-16 sm:py-24 bg-canvas scroll-mt-20">
       <Container>
         {/* Header */}
         <div className="text-center max-w-2xl mx-auto mb-14 sm:mb-18">

@@ -146,6 +146,7 @@ async def parse_resume_text(text: str) -> CandidateProfileSchema:
             user_content=text[:10000],  # Limit to 10k chars to fit within context window
             response_model=ParsedProfile,
             temperature=0.0,
+            max_tokens=800,
         )
         return CandidateProfileSchema(
             fullName=parsed.full_name,

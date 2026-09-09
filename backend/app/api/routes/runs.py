@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_db
 from app.automation.errors import RunStatus
+from app.automation.throttle import compute_start_offsets
 from app.core.redis import get_arq_pool
 from app.models.candidate import Candidate
 from app.models.job import JobPosting
@@ -111,9 +112,14 @@ async def start_applying(
     # Enqueue to Arq Redis
     try:
         redis_pool = await get_arq_pool()
-        for run, _ in created_runs:
-            await redis_pool.enqueue_job("run_application", str(run.id))
-            log.info("runs.enqueued_to_arq", run_id=str(run.id))
+        offsets = compute_start_offsets(len(created_runs))
+        for (run, _), offset in zip(created_runs, offsets, strict=False):
+            await redis_pool.enqueue_job("run_application", str(run.id), _defer_by=offset)
+            log.info(
+                "runs.enqueued_to_arq",
+                run_id=str(run.id),
+                defer_seconds=offset.total_seconds(),
+            )
     except Exception as exc:
         log.warning("runs.redis_enqueue_warning", error=str(exc))
 

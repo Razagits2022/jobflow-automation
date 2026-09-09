@@ -35,7 +35,6 @@ class AtsAdapter(Protocol):
         """Fill form fields using ATS-specific widget handling."""
         ...
 
-
     async def submit(self, *, page: Page, run_id: object) -> None:
         """Submit the form and capture confirmation proof."""
         ...

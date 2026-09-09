@@ -53,3 +53,8 @@ def configure_logging() -> None:
         stream=sys.stdout,
         level=log_level,
     )
+
+    # Quiet noisy third-party loggers to keep console output readable
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

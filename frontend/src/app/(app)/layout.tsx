@@ -47,30 +47,31 @@ export default function AppLayout({
       {/* Top App Bar */}
       <header className="sticky top-0 z-30 bg-canvas/95 backdrop-blur-md border-b border-line">
         <Container className="flex items-center justify-between h-16 sm:h-18">
-          <div className="flex items-center gap-8">
+          {/* Left: Logo */}
+          <div className="flex items-center shrink-0">
             <Logo href="/" />
-
-            {/* Desktop Navigation Links */}
-            <nav className="hidden md:flex items-center gap-1 text-sm font-medium text-body">
-              {APP_NAV_LINKS.map(({ href, label }) => {
-                const isActive = pathname === href || pathname.startsWith(`${href}/`);
-                return (
-                  <Link
-                    key={label}
-                    href={href}
-                    className={clsx(
-                      "px-3.5 py-1.5 rounded-pill transition-all outline-none focus-visible:ring-2 focus-visible:ring-accent",
-                      isActive
-                        ? "text-accent font-semibold bg-accent-soft/70 shadow-3xs"
-                        : "text-body hover:text-ink hover:bg-cream"
-                    )}
-                  >
-                    {label}
-                  </Link>
-                );
-              })}
-            </nav>
           </div>
+
+          {/* Center: Desktop Navigation Links */}
+          <nav className="hidden md:flex items-center justify-center gap-2 text-sm font-medium text-body flex-1">
+            {APP_NAV_LINKS.map(({ href, label }) => {
+              const isActive = pathname === href || pathname.startsWith(`${href}/`);
+              return (
+                <Link
+                  key={label}
+                  href={href}
+                  className={clsx(
+                    "px-3.5 py-1.5 rounded-pill transition-all outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                    isActive
+                      ? "text-accent font-semibold bg-accent-soft/70 shadow-3xs"
+                      : "text-body hover:text-ink hover:bg-cream"
+                  )}
+                >
+                  {label}
+                </Link>
+              );
+            })}
+          </nav>
 
           {/* Right: Profile Chip & Mobile Menu Toggle */}
           <div className="flex items-center gap-3">

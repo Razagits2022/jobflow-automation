@@ -69,10 +69,12 @@ url, connect_args = normalize_asyncpg_url(settings.database_url)
 engine: AsyncEngine = create_async_engine(
     url,
     connect_args=connect_args,
-    echo=settings.app_env == "development",
+    echo=settings.db_echo,
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
+    pool_recycle=60,
+    pool_timeout=30,
 )
 
 # ---------------------------------------------------------------------------

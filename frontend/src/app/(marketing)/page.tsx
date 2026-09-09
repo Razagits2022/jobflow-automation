@@ -1,10 +1,10 @@
-﻿import React from "react";
+import React from "react";
 import { Hero } from "./Hero";
 import { StatsBand } from "./StatsBand";
 import { HowItWorksCards } from "./HowItWorksCards";
 import { ProblemGrid } from "./ProblemGrid";
 import { CoverageSection } from "./CoverageSection";
-import { DarkCTASection } from "./DarkCTASection";
+import { FAQSection } from "./FAQSection";
 
 export default function MarketingPage() {
   return (
@@ -18,14 +18,14 @@ export default function MarketingPage() {
       {/* 3. HowItWorksCards */}
       <HowItWorksCards />
 
-      {/* 4. ProblemGrid */}
+      {/* 4. Why JobFlow (Problem vs Solution) */}
       <ProblemGrid />
 
-      {/* 5. CoverageSection */}
+      {/* 5. Supported Portals (Coverage) */}
       <CoverageSection />
 
-      {/* 6. DarkCTASection */}
-      <DarkCTASection />
+      {/* 6. FAQ */}
+      <FAQSection />
     </>
   );
 }

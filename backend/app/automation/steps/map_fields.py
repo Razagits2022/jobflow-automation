@@ -45,18 +45,28 @@ Output format must be ONLY valid JSON matching this schema:
 
 Action Rules:
 - "fill": For text, email, tel, number, textarea inputs. Provide clean string value.
-- "select": For <select> dropdowns. Pick BEST matching option from field `options`.
+- "select": For <select> dropdowns and comboboxes. Pick BEST matching option from field `options`.
 - "check": For radio/checkboxes. Provide option text or value to select.
 - "upload": For file inputs (resume/cv). Provide "__RESUME__" as value.
-- "skip": When the field cannot be filled safely or requires sensitive info (SSN, password).
+- "skip": ONLY when the field is optional and cannot be filled safely, or requires sensitive private credentials (SSN, credit card, passwords). NEVER skip a required field!
+
+Special Handling for Questions NOT in Candidate's Resume:
+1. "How did you hear about us?" / "Source" / "Referral":
+   - If options are provided, select "LinkedIn", "Company Website", "Careers Page", or "Job Board". If none of those exist, pick the first sensible option.
+   - If text input, fill "LinkedIn".
+2. "Have you ever worked here before?" / "Former employee or contractor?":
+   - Select "No", "I have never worked at [Company]", or the negative option.
+3. "Preferred office / location":
+   - Pick the option matching candidate's location, "Remote", or the first available office option.
+4. General Required Fields with missing resume info:
+   - If required dropdown/radio: NEVER skip. Pick the most sensible default or the first valid option.
+   - If required text/textarea: Fill a sensible professional answer (e.g. "LinkedIn", "N/A", or a brief relevant sentence based on job title).
 
 Constraints:
 1. For selects and radios, value MUST closely match one of the strings in `options`.
 2. For US Work Authorization, choose the option indicating authorization if authorized.
-3. For custom questions, generate a truthful answer from candidate experience and job facts.
-4. NEVER invent private credentials (SSN, credit card, passwords). Mark as "skip".
-5. Return ONLY the JSON object. No Markdown code fences or extra text."""
-
+3. NEVER invent private credentials (SSN, credit card, passwords). Mark as "skip".
+4. Return ONLY the JSON object. No Markdown code fences or extra text."""
 
 
 def _heuristic_map_fields(
@@ -71,7 +81,27 @@ def _heuristic_map_fields(
     last_name = " ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else ""
     email = candidate_profile.get("email", "")
     phone = candidate_profile.get("phone", "")
-    location = candidate_profile.get("location", "")
+    city = candidate_profile.get("city", "")
+    state = (
+        candidate_profile.get("state")
+        or candidate_profile.get("county")
+        or candidate_profile.get("province")
+        or candidate_profile.get("region")
+        or city
+    )
+    country = candidate_profile.get("country", "United Kingdom")
+    postal_code = (
+        candidate_profile.get("postal_code")
+        or candidate_profile.get("postalCode")
+        or candidate_profile.get("zip")
+        or candidate_profile.get("zip_code", "")
+    )
+    address = (
+        candidate_profile.get("address")
+        or candidate_profile.get("address_line_1")
+        or candidate_profile.get("addressLine1", "")
+    )
+    location = candidate_profile.get("location") or city or "London"
     years_exp = str(
         candidate_profile.get("yearsExperience") or candidate_profile.get("years_experience", "3")
     )
@@ -87,10 +117,23 @@ def _heuristic_map_fields(
             continue
 
         if f_type == "file" or "resume" in label or "cv" in label:
-            mappings.append(FieldMapping(selector=selector, value="__RESUME__", action="upload"))
+            # Only map the primary / first resume upload field to __RESUME__ to prevent multiple uploads wiping ATS forms
+            if not any(m.action == "upload" for m in mappings):
+                mappings.append(FieldMapping(selector=selector, value="__RESUME__", action="upload"))
+            else:
+                mappings.append(FieldMapping(selector=selector, value="", action="skip"))
             continue
 
-        if "first name" in label:
+        # Check country phone code BEFORE general phone
+        if (
+            "country code" in label
+            or "phone code" in label
+            or "dial code" in label
+            or "countryphonecode" in selector.lower()
+        ):
+            act_code: Literal["select", "fill"] = "select" if (f_type == "select" or options) else "fill"
+            mappings.append(FieldMapping(selector=selector, value=country, action=act_code))
+        elif "first name" in label:
             mappings.append(FieldMapping(selector=selector, value=first_name, action="fill"))
         elif "last name" in label:
             mappings.append(
@@ -104,9 +147,22 @@ def _heuristic_map_fields(
             mappings.append(FieldMapping(selector=selector, value=email, action="fill"))
         elif "phone" in label or "mobile" in label:
             mappings.append(FieldMapping(selector=selector, value=phone, action="fill"))
-        elif "location" in label or "city" in label or "address" in label:
+        elif "address line 2" in label or "address 2" in label:
+            mappings.append(FieldMapping(selector=selector, value="", action="skip"))
+        elif "address line 1" in label or "address 1" in label or ("address" in label and "line" in label):
+            mappings.append(FieldMapping(selector=selector, value=address or location, action="fill"))
+        elif "country" in label or "nation" in label:
+            act_country: Literal["select", "fill"] = "select" if (f_type == "select" or options) else "fill"
+            mappings.append(FieldMapping(selector=selector, value=country, action=act_country))
+        elif "county" in label or "state" in label or "province" in label or "region" in label:
+            mappings.append(FieldMapping(selector=selector, value=state or city or "Greater London", action="fill"))
+        elif "postcode" in label or "postal" in label or "zip" in label:
+            mappings.append(FieldMapping(selector=selector, value=postal_code or "SW1A 1AA", action="fill"))
+        elif "city" in label or "town" in label:
+            mappings.append(FieldMapping(selector=selector, value=city or location, action="fill"))
+        elif "location" in label or "address" in label:
             mappings.append(
-                FieldMapping(selector=selector, value=location or "Remote", action="fill")
+                FieldMapping(selector=selector, value=location or address or "Remote", action="fill")
             )
         elif "year" in label and "experience" in label:
             if f_type in ("select", "radio") and options:
@@ -136,13 +192,62 @@ def _heuristic_map_fields(
 
             else:
                 mappings.append(FieldMapping(selector=selector, value="Yes", action="fill"))
+        elif "referr" in label or "worked" in label or "former employee" in label or "previously employed" in label:
+            # Negative answer to avoid conditional required questions like "Please name referrer"
+            if options:
+                neg_opt = next(
+                    (
+                        o
+                        for o in options
+                        if re.search(r"\b(never|no\b|not\b|false\b)", o, re.IGNORECASE)
+                    ),
+                    options[-1],
+                )
+                act_neg: Literal["select", "check"] = "select" if f_type == "select" else "check"
+                mappings.append(FieldMapping(selector=selector, value=neg_opt, action=act_neg))
+            else:
+                mappings.append(FieldMapping(selector=selector, value="No", action="fill"))
+        elif "hear" in label or "source" in label:
+            if options:
+                source_opt = next(
+                    (
+                        o
+                        for o in options
+                        if re.search(r"\b(linkedin|website|career|job board|online)\b", o, re.IGNORECASE)
+                    ),
+                    options[0],
+                )
+                act: Literal["select", "check"] = "select" if f_type == "select" else "check"
+                mappings.append(FieldMapping(selector=selector, value=source_opt, action=act))
+            else:
+                mappings.append(FieldMapping(selector=selector, value="LinkedIn", action="fill"))
+        elif "office" in label or "preferred location" in label:
+            if options:
+                loc_opt = next(
+                    (
+                        o
+                        for o in options
+                        if (location and location.lower() in o.lower()) or "remote" in o.lower()
+                    ),
+                    options[0],
+                )
+                act_loc: Literal["select", "check"] = "select" if f_type == "select" else "check"
+                mappings.append(FieldMapping(selector=selector, value=loc_opt, action=act_loc))
+            else:
+                mappings.append(FieldMapping(selector=selector, value=location or "Remote", action="fill"))
         elif "education" in label or "degree" in label:
             mappings.append(
                 FieldMapping(
                     selector=selector, value=education or "Bachelor's Degree", action="fill"
                 )
             )
-        elif f_type == "checkbox" and field.get("required"):
+        elif f_type == "checkbox" and (
+            field.get("required")
+            or any(
+                k in label
+                for k in ["certif", "true and complete", "terms", "agree", "policy", "accuracy", "acknowledge", "consent"]
+            )
+        ):
             mappings.append(FieldMapping(selector=selector, value="true", action="check"))
         elif field.get("required"):
             if options and f_type == "select":
@@ -181,20 +286,49 @@ async def map_fields(
         log.warning("map_fields.ai_key_missing_using_heuristic")
         return _heuristic_map_fields(form_fields, candidate_profile)
 
-    job_facts_dict = job_facts.model_dump() if isinstance(job_facts, BaseModel) else job_facts
+    # Filter to only essential field metadata to minimise token burn
+    sanitized_fields = [
+        {
+            "id": f.get("id", ""),
+            "label": f.get("label", ""),
+            "type": f.get("type", "text"),
+            "required": bool(f.get("required", False)),
+            "options": f.get("options", []),
+            "selector": f.get("selector", ""),
+        }
+        for f in form_fields
+    ]
+
+    # Send only concise job title and short summary
+    if isinstance(job_facts, BaseModel):
+        job_summary = {
+            "role_title": getattr(job_facts, "role_title", ""),
+            "summary": getattr(job_facts, "summary", "")[:300],
+        }
+    elif isinstance(job_facts, dict):
+        job_summary = {
+            "role_title": job_facts.get("role_title", ""),
+            "summary": str(job_facts.get("summary", ""))[:300],
+        }
+    else:
+        job_summary = {"role_title": "Position", "summary": ""}
 
     user_payload = {
-        "form_fields": form_fields,
+        "form_fields": sanitized_fields,
         "candidate_profile": candidate_profile,
-        "job_facts": job_facts_dict,
+        "job_facts": job_summary,
     }
+
+    # Token cap with room for custom essay answers and cover letters
+    token_cap = 2000
 
     try:
         res = await call_ai(
             system_prompt=_MAP_FIELDS_SYSTEM_PROMPT,
-            user_content=f"Payload to map:\n{json.dumps(user_payload, indent=2)}",
+            user_content=f"Payload to map:\n{json.dumps(user_payload, separators=(',', ':'))}",
             response_model=FieldMappingResponse,
             temperature=0.0,
+            max_tokens=token_cap,
         )
         return res.mappings
     except Exception as exc:  # noqa: BLE001
