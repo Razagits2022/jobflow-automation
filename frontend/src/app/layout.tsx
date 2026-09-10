@@ -3,6 +3,7 @@ import { Manrope, Inter } from "next/font/google";
 import "./globals.css";
 import { QueryProvider } from "@/lib/query-client";
 import { ServerWarmupProvider } from "@/components/ServerWarmup";
+import { AccessGuard } from "@/components/AccessGuard";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 
 const manrope = Manrope({
@@ -39,7 +40,7 @@ export default function RootLayout({
       >
         <QueryProvider>
           <ServerWarmupProvider>
-            {children}
+            <AccessGuard>{children}</AccessGuard>
           </ServerWarmupProvider>
         </QueryProvider>
       </body>

@@ -8,7 +8,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { useAppStore, CandidateProfile } from "@/lib/store";
 import { Card, Button, Field } from "@/components/ui";
-import { FileText, ArrowUpRight, CheckCircle2, Plus, X, Upload } from "lucide-react";
+import { FileText, ArrowUpRight, CheckCircle2, Plus, X, Upload, ShieldCheck, Clock, KeyRound, LogOut } from "lucide-react";
+import { getRemainingDays, revokeAccess } from "@/lib/access-code";
 
 interface ProfileFormValues {
   fullName: string;
@@ -43,10 +44,23 @@ export default function ProfilePage() {
   const [prevProfile, setPrevProfile] = useState(profile);
   const [skillInput, setSkillInput] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [accessDays, setAccessDays] = useState<number>(() => getRemainingDays());
 
   useEffect(() => {
     loadProfile();
+    setAccessDays(getRemainingDays());
   }, [loadProfile]);
+
+  const handleRevokeAccess = () => {
+    if (
+      window.confirm(
+        "Are you sure you want to reset your access code on this device? You will need to enter the code again to regain access."
+      )
+    ) {
+      revokeAccess();
+      router.replace("/accesscode");
+    }
+  };
 
 
   // Sync skills if profile reference changes without calling setState in an effect
@@ -315,6 +329,39 @@ export default function ProfilePage() {
             )}
           </div>
         </form>
+      </Card>
+
+      {/* Access Code & Security Card */}
+      <Card className="space-y-4 border-line/80 bg-canvas/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent shrink-0 mt-0.5">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-ink">30-Day Access Pass</h3>
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-pill">
+                  <Clock className="w-3 h-3" /> {accessDays} days remaining
+                </span>
+              </div>
+              <p className="text-xs text-body mt-0.5">
+                This browser profile is authorized with a valid JobFlow access code.
+              </p>
+            </div>
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleRevokeAccess}
+            className="text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200 shrink-0 self-start sm:self-center"
+          >
+            <LogOut className="w-3.5 h-3.5 mr-1" />
+            <span>Reset Access Pass</span>
+          </Button>
+        </div>
       </Card>
     </div>
   );
