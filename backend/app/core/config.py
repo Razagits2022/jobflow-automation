@@ -95,16 +95,13 @@ class Settings(BaseSettings):
         default=True,
         description="Run Chromium in headless mode. Set false for local debugging only.",
     )
-    custom_ip: str = Field(
-        default="",
-        description=(
-            "Custom IP / Proxy address (e.g. '1.2.3.4:8080' or 'http://user:pass@1.2.3.4:8080'). "
-            "Leave empty to use host machine's own direct internet IP."
-        ),
+    proxy_enabled: bool = Field(
+        default=False,
+        description="Route Playwright browser traffic through a custom proxy. Off by default.",
     )
-    proxy_url: str = Field(
-        default="",
-        description="Alias for custom_ip.",
+    proxy_url: str | None = Field(
+        default=None,
+        description="Full proxy URL, e.g. http://user:pass@host:port",
     )
 
     # ---- Worker ----
@@ -128,14 +125,28 @@ class Settings(BaseSettings):
     inter_job_delay_max_minutes: float = Field(default=20.0)
 
     # ---- Storage ----
-    storage_driver: Literal["local", "s3"] = Field(
-        default="local",
+    storage_driver: Literal["local", "s3", "supabase"] = Field(
+        default="supabase",
         description="Where to save screenshots, HTML, and resumes.",
     )
     s3_endpoint: str = ""
     s3_bucket: str = ""
     s3_key: str = ""
     s3_secret: str = ""
+
+    # ---- Supabase Storage ----
+    supabase_url: str | None = Field(
+        default=None,
+        description="e.g. https://<ref>.supabase.co",
+    )
+    supabase_service_role_key: str | None = Field(
+        default=None,
+        description="Service role key for storage access from the backend",
+    )
+    supabase_storage_bucket: str = Field(
+        default="artifacts",
+        description="Supabase storage bucket name for artifacts",
+    )
 
     # ---- Computed helpers ----
     @property
@@ -159,9 +170,11 @@ class Settings(BaseSettings):
         return self.database_direct_url or self.database_url
 
     @property
-    def active_ip_or_proxy(self) -> str:
-        """Return configured custom IP/proxy address, or empty string when using host's own IP."""
-        return (self.custom_ip or self.proxy_url).strip()
+    def active_ip_or_proxy(self) -> str | None:
+        """Return configured proxy URL if proxy_enabled is True, else None."""
+        if self.proxy_enabled and self.proxy_url and self.proxy_url.strip():
+            return self.proxy_url.strip()
+        return None
 
 
 # Module-level singleton — import this everywhere.

@@ -5,9 +5,10 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_db
 from app.automation.errors import RunStatus
 from app.automation.throttle import compute_start_offsets
+from app.core.config import settings
 from app.core.redis import get_arq_pool
 from app.models.candidate import Candidate
 from app.models.job import JobPosting
@@ -170,8 +172,8 @@ async def get_run_details(
 async def get_run_screenshot(
     run_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-) -> FileResponse:
-    """Stream confirmation or failure screenshot artifact."""
+) -> Response:
+    """Stream confirmation or failure screenshot artifact via signed URL or local file."""
     stmt = select(ApplicationRun).where(ApplicationRun.id == run_id)
     result = await db.execute(stmt)
     run = result.scalar_one_or_none()
@@ -181,6 +183,55 @@ async def get_run_screenshot(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Screenshot artifact not available for this run.",
         )
+
+    key = run.confirmation_artifact_key
+    if "\\" in key or key.startswith("artifacts/"):
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Legacy local artifact from before storage migration",
+        )
+
+    if settings.storage_driver == "supabase":
+        if not settings.supabase_url or not settings.supabase_service_role_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Supabase storage credentials not configured.",
+            )
+
+        base_url = settings.supabase_url.rstrip("/")
+        bucket = settings.supabase_storage_bucket
+        key = run.confirmation_artifact_key
+        sign_url = f"{base_url}/storage/v1/object/sign/{bucket}/{key}"
+
+        headers = {
+            "Authorization": f"Bearer {settings.supabase_service_role_key}",
+            "apikey": settings.supabase_service_role_key,
+            "Content-Type": "application/json",
+        }
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.post(sign_url, json={"expiresIn": 300}, headers=headers)
+            if res.status_code == 404:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Screenshot object not found in Supabase storage.",
+                )
+            if res.is_error:
+                log.error("runs.supabase_sign_failed", status=res.status_code, body=res.text)
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Failed to generate signed screenshot URL.",
+                )
+            data = res.json()
+            signed_path = data.get("signedURL")
+            if not signed_path:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Invalid response from Supabase storage sign endpoint.",
+                )
+
+            full_signed_url = f"{base_url}/storage/v1{signed_path}"
+            return RedirectResponse(url=full_signed_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     file_path = Path(run.confirmation_artifact_key)
     if not file_path.exists():

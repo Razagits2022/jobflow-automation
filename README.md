@@ -205,6 +205,11 @@ pnpm lint
 pnpm build
 ```
 
+## 📦 Artifact Storage & Legacy Screenshots Note
+
+- **Persistent Supabase Storage**: Starting from the Supabase Storage update, screenshots and HTML artifacts are uploaded to a private Supabase Storage bucket (`artifacts`). When requesting screenshots via `/api/runs/{id}/screenshot`, the API generates a short-lived (5-minute) signed URL and redirects with HTTP 307.
+- **Legacy Screenshots Backfill Note**: Runs created prior to the Supabase Storage update stored screenshot paths pointing to local disk files on Render. Because local disk storage on Render is ephemeral across deploys and container recycles, those older screenshots cannot be recovered and will return a 404 (file not found on disk). All runs executed after this deployment persist their artifacts permanently in Supabase Storage.
+
 ---
 
 ## 📜 License

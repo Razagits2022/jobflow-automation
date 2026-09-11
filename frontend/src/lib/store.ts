@@ -14,13 +14,10 @@ export type RunStatus =
 export interface CandidateProfile {
   fullName: string;
   email: string;
-  phone: string;
-  location: string;
-  title: string;
-  yearsExperience: number;
-  workAuthorized: boolean;
-  education: string;
-  skills: string[];
+  phone?: string;
+  location?: string;
+  workAuthorized?: boolean | null;
+  resumeSummary?: string;
 }
 
 export interface JobUrl {

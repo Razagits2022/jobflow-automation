@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -17,6 +19,8 @@ from app.api.routes import candidates, health, jobs, runs, stats
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.core.redis import close_arq_pool
+
+log = structlog.get_logger(__name__)
 
 
 class SubscribeResponse(BaseModel):
@@ -27,6 +31,23 @@ class SubscribeResponse(BaseModel):
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: startup and shutdown hooks."""
     configure_logging()
+
+    if settings.storage_driver == "supabase":
+        missing: list[str] = []
+        if not settings.supabase_url or not settings.supabase_url.strip():
+            missing.append("SUPABASE_URL")
+        if not settings.supabase_service_role_key or not settings.supabase_service_role_key.strip():
+            missing.append("SUPABASE_SERVICE_ROLE_KEY")
+        if not settings.supabase_storage_bucket or not settings.supabase_storage_bucket.strip():
+            missing.append("SUPABASE_STORAGE_BUCKET")
+
+        if missing:
+            log.error("storage.supabase_misconfigured", missing=", ".join(missing))
+        else:
+            parsed = urlparse(settings.supabase_url)
+            host = parsed.hostname or settings.supabase_url
+            log.info("storage.supabase_ready", url=host, bucket=settings.supabase_storage_bucket)
+
     yield
     await close_arq_pool()
 

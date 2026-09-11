@@ -19,32 +19,60 @@ async def test_subscribe_endpoint() -> None:
 @pytest.mark.asyncio
 async def test_candidate_endpoints() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # 1. Update candidate
+        # 1. Update candidate with simplified schema
         payload = {
             "fullName": "Jane Tester",
             "email": "jane.tester@example.com",
             "phone": "+1 (555) 234-5678",
             "location": "New York, NY",
-            "title": "Staff Backend Engineer",
-            "yearsExperience": 7,
             "workAuthorized": True,
-            "education": "MS Computer Science",
-            "skills": ["Python", "FastAPI", "PostgreSQL", "Docker"],
+            "resumeSummary": "Staff Backend Engineer with 7 years experience in Python, FastAPI, PostgreSQL, and Docker. MS Computer Science.",
         }
         put_res = await client.put("/api/candidate", json=payload)
         assert put_res.status_code == 200
         data = put_res.json()
         assert data["fullName"] == "Jane Tester"
         assert data["email"] == "jane.tester@example.com"
-        assert data["yearsExperience"] == 7
-        assert "FastAPI" in data["skills"]
+        assert "Staff Backend Engineer" in data["resumeSummary"]
 
         # 2. Get candidate
         get_res = await client.get("/api/candidate")
         assert get_res.status_code == 200
         cand_data = get_res.json()
         assert cand_data["fullName"] == "Jane Tester"
-        assert cand_data["title"] == "Staff Backend Engineer"
+        assert cand_data["resumeSummary"] == payload["resumeSummary"]
+
+
+@pytest.mark.asyncio
+async def test_candidate_legacy_fallback() -> None:
+    """Verify that a candidate profile stored with legacy fields synthesizes resumeSummary on read."""
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.candidate import Candidate
+
+    async with AsyncSessionLocal() as session:
+        stmt = select(Candidate).order_by(Candidate.created_at.asc()).limit(1)
+        res = await session.execute(stmt)
+        cand = res.scalar_one_or_none()
+        if cand:
+            cand.profile = {
+                "location": "Boston, MA",
+                "title": "Lead Architect",
+                "yearsExperience": 10,
+                "education": "BS Information Systems",
+                "skills": ["Go", "Kubernetes", "AWS"],
+            }
+            await session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        get_res = await client.get("/api/candidate")
+        assert get_res.status_code == 200
+        data = get_res.json()
+        assert "Lead Architect" in data["resumeSummary"]
+        assert "Years of Experience: 10" in data["resumeSummary"]
+        assert "BS Information Systems" in data["resumeSummary"]
+        assert "Kubernetes" in data["resumeSummary"]
 
 
 @pytest.mark.asyncio

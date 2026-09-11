@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+
 import structlog
 from playwright.async_api import Page
 

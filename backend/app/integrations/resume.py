@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 import structlog
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pypdf import PdfReader
 
 try:
@@ -24,15 +24,14 @@ log = structlog.get_logger(__name__)
 class ParsedProfile(BaseModel):
     """Internal model for AI parsing response."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     full_name: str
     email: str
     phone: str = ""
     location: str = ""
-    title: str = ""
-    years_experience: int = 0
-    work_authorized: bool = True
-    education: str = ""
-    skills: list[str] = Field(default_factory=list)
+    work_authorized: bool | None = None
+    resume_summary: str = Field(default="", alias="resumeSummary")
 
 
 def extract_resume_text(path: Path | str) -> str:
@@ -69,27 +68,63 @@ def extract_resume_text(path: Path | str) -> str:
         return file_path.read_text(encoding="utf-8", errors="ignore").strip()
 
 
-_RESUME_PARSER_SYSTEM_PROMPT = """You are an expert AI resume parsing engine.
-Extract the candidate's professional profile and format into JSON with this schema:
+_RESUME_PARSER_SYSTEM_PROMPT = """You are an expert resume summarizer. From the resume text below, produce a compact JSON profile that another AI will later use to fill job application forms.
+
+Return ONLY valid JSON (no markdown, no commentary) in this exact shape:
 
 {
-  "full_name": "Candidate's first and last name",
-  "email": "Email address",
-  "phone": "Phone number with country code if present, or empty string",
-  "location": "City, State / Country, or 'Remote'",
-  "title": "Current or target professional title (e.g. Senior Software Engineer)",
-  "years_experience": 4,
-  "work_authorized": true,
-  "education": "Highest degree and institution or field of study",
-  "skills": ["Skill1", "Skill2", "Skill3"]
+  "full_name": "First Last",
+  "email": "email or empty string",
+  "phone": "phone with country code if present, or empty string",
+  "location": "City, Region/Country, or 'Remote', or empty string",
+  "work_authorized": null,
+  "resume_summary": "compact structured summary, see rules below"
 }
 
-Rules:
-1. Return ONLY valid JSON matching this schema.
-2. If years_experience is unstated, provide your best integer estimate based on career chronology.
-3. If work authorization is unstated, infer from location/citizenship cues or default to true.
-4. Extract the top 5 to 15 relevant technical or domain skills as an array of strings.
-5. Do NOT include markdown code blocks or explanatory commentary outside the JSON."""
+Rules for the top-level fields:
+- Extract full_name, email, phone, location verbatim from the resume header.
+- For work_authorized:
+  - true ONLY if the resume EXPLICITLY states US work authorization, US citizenship, US permanent residence / green card, or equivalent US work-eligible status.
+  - Otherwise null. Do NOT guess from location, name, or country. Do NOT default to true.
+
+Rules for resume_summary (the important part):
+
+TARGET LENGTH: aim for ~3000 characters. HARD LIMIT: 5000 characters. Never exceed this. If you would exceed it, cut older jobs and less-relevant details first.
+
+SUMMARIZE. DO NOT COPY. This is not the resume — it is a distilled brief. Do NOT paste bullet points verbatim. Rewrite in your own compact prose and short bullets.
+
+STRUCTURE (use exactly these section headers, in this order, plain text with newlines):
+
+Summary: One short paragraph (2-3 sentences) with current role, total years of experience, and top 2-3 strengths.
+
+Work authorization: Optional. Include ONLY if the resume explicitly mentions work eligibility, US citizenship, permanent residence / green card, or visa status (e.g. "US Citizen", "Authorized to work in the US", "Requires visa sponsorship"). If not stated in the resume, omit this section entirely.
+
+Core skills: A single line, comma-separated. At most 12 items. Group by relevance. Skip generic terms (e.g. "problem solving", "teamwork"). Prefer concrete technologies and domain expertise.
+
+Experience: For each role (most recent first), one line only, in this format:
+  <Title> at <Company> (<Start> – <End>): <one-sentence impact focusing on measurable outcomes, scale, or ownership>
+Include at most the 4 most recent or most relevant roles. If the resume has more, drop the oldest.
+
+Education: One line per degree, most recent first. Format:
+  <Degree>, <Institution> (<Year>)
+Skip GPA unless it's exceptional (>= 3.8).
+
+Certifications: Comma-separated on one line. Max 5. Skip if none.
+
+Notable projects: Optional. Max 2 lines. Only include if the resume features prominent personal or open-source work relevant to engineering roles. Otherwise omit this section entirely.
+
+WHAT TO OMIT ENTIRELY:
+- Full bullet lists from the original resume.
+- Every technology ever touched — keep only the ones that define the candidate.
+- Soft skills, language proficiency, references, hobbies, addresses.
+- Marketing adjectives ("innovative", "passionate", "results-driven").
+
+STYLE:
+- Third person is fine. No first person.
+- No markdown symbols like **, ##, ---.
+- Preserve original phrasing for job titles and company names.
+- Do not invent metrics, employers, dates, or certifications. Only include what the resume states.
+"""
 
 
 def _heuristic_parse_resume(text: str) -> CandidateProfileSchema:
@@ -120,16 +155,36 @@ def _heuristic_parse_resume(text: str) -> CandidateProfileSchema:
         if re.search(rf"\b{re.escape(known)}\b", text, re.IGNORECASE):
             skills.append(known)
 
+    auth_status: str | None = None
+    work_auth: bool | None = None
+    text_lower = text.lower()
+    if any(w in text_lower for w in ["us citizen", "u.s. citizen", "green card", "permanent resident", "authorized to work in the u"]):
+        auth_status = "Authorized to work in the US"
+        work_auth = True
+    elif any(w in text_lower for w in ["visa sponsorship", "requires sponsorship"]):
+        auth_status = "Requires visa sponsorship"
+        work_auth = False
+
+    unique_skills = list(dict.fromkeys(skills))
+    summary_parts = [
+        f"Summary: Software professional with skills in {', '.join(unique_skills[:10])}.",
+    ]
+    if auth_status:
+        summary_parts.append(f"\nWork authorization: {auth_status}")
+    summary_parts.extend([
+        "\nCore skills: " + ", ".join(unique_skills[:12]),
+        "\nExperience: (unavailable — AI parser not configured)",
+        "\nEducation: (unavailable — AI parser not configured)",
+    ])
+    resume_summary = "\n".join(summary_parts)[:2000]
+
     return CandidateProfileSchema(
         fullName=name,
         email=email,
         phone=phone,
         location="Remote",
-        title="Software Engineer",
-        yearsExperience=3,
-        workAuthorized=True,
-        education="Bachelor's Degree",
-        skills=list(dict.fromkeys(skills)),
+        workAuthorized=work_auth,
+        resumeSummary=resume_summary,
     )
 
 
@@ -143,21 +198,22 @@ async def parse_resume_text(text: str) -> CandidateProfileSchema:
     try:
         parsed = await call_ai(
             system_prompt=_RESUME_PARSER_SYSTEM_PROMPT,
-            user_content=text[:10000],  # Limit to 10k chars to fit within context window
+            user_content=text[:12000],  # Limit to 12k chars to fit full resumes
             response_model=ParsedProfile,
             temperature=0.0,
-            max_tokens=800,
+            max_tokens=1500,
         )
+        if parsed.resume_summary and len(parsed.resume_summary) > 5000:
+            log.info("resume.summary_hard_clipped", original_len=len(parsed.resume_summary))
+            parsed.resume_summary = parsed.resume_summary[:5000].rstrip() + "..."
+
         return CandidateProfileSchema(
             fullName=parsed.full_name,
             email=parsed.email,
             phone=parsed.phone,
             location=parsed.location,
-            title=parsed.title,
-            yearsExperience=parsed.years_experience,
             workAuthorized=parsed.work_authorized,
-            education=parsed.education,
-            skills=parsed.skills,
+            resumeSummary=parsed.resume_summary,
         )
     except Exception as exc:  # noqa: BLE001
         log.error("resume.ai_parse_failed_falling_back", error=str(exc))

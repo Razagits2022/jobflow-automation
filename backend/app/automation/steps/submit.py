@@ -541,7 +541,7 @@ async def submit(*, page: Page, run_id: uuid.UUID) -> str:
 
     # 2C. Better validation-error detection when unconfirmed
     if not confirmed:
-        error_texts: list[str] = []
+        unconfirmed_err_texts: list[str] = []
         try:
             err_locators = page.locator(_VALIDATION_ERROR_SELECTORS)
             count = await err_locators.count()
@@ -556,17 +556,17 @@ async def submit(*, page: Page, run_id: uuid.UUID) -> str:
                         log.info("submit.confirmed", signal="alert_with_confirmation_text", response_text=text[:120])
                         confirmed = True
                         break
-                    if text and len(text) < 300 and text not in error_texts:
+                    if text and len(text) < 300 and text not in unconfirmed_err_texts:
                         if not any(w in text.lower() for w in ["cookie", "privacy", "copyright"]):
-                            error_texts.append(text[:120])
-                    if len(error_texts) >= 3:
+                            unconfirmed_err_texts.append(text[:120])
+                    if len(unconfirmed_err_texts) >= 3:
                         break
         except Exception:
             pass
 
-        if not confirmed and error_texts:
-            joined_errs = "; ".join(error_texts)
-            if any("captcha" in err.lower() or "recaptcha" in err.lower() for err in error_texts):
+        if not confirmed and unconfirmed_err_texts:
+            joined_errs = "; ".join(unconfirmed_err_texts)
+            if any("captcha" in err.lower() or "recaptcha" in err.lower() for err in unconfirmed_err_texts):
                 log.warning("submit.captcha_error_detected", errors=joined_errs, waited_seconds=waited_seconds)
                 raise CaptchaEncounteredError(f"Submission blocked by CAPTCHA: {joined_errs}")
             log.warning(

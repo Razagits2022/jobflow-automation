@@ -1,9 +1,8 @@
 """Centralized outbound IP and proxy management.
 
-All IP routing, proxy parsing, and network origin logic lives in this single file:
-- When CUSTOM_IP / PROXY_URL in .env is empty: uses host machine's own direct public IP.
-- When CUSTOM_IP / PROXY_URL is set: automatically formats and routes Playwright traffic
-  through the specified IP/proxy server.
+- When PROXY_ENABLED is False or PROXY_URL is empty: uses direct connection (no proxy).
+- When PROXY_ENABLED is True and PROXY_URL is set: formats and routes Playwright traffic
+  through the specified proxy server.
 """
 
 from __future__ import annotations
@@ -147,7 +146,7 @@ def _start_preemptive_auth_tunnel(
             upstream_host=upstream_host,
             upstream_port=upstream_port,
         )
-        return port
+        return int(port)
 
 
 def parse_ip_or_proxy(raw: str) -> dict[str, str] | None:
@@ -209,17 +208,15 @@ def parse_ip_or_proxy(raw: str) -> dict[str, str] | None:
 
 
 def get_playwright_proxy_config() -> dict[str, str] | None:
-    """Return Playwright proxy dictionary, or None to use host's own direct public IP.
+    """Return Playwright proxy dictionary, or None to use direct connection.
 
-    If the proxy requires username/password authentication, an in-process local
-    preemptive auth tunnel is used to prevent Chromium ERR_CONNECTION_RESET
-    renegotiation failures on HTTPS CONNECT requests.
+    The proxy is ONLY applied when settings.proxy_url is set and non-empty
+    AND settings.proxy_enabled is True.
     """
-    active_ip = settings.active_ip_or_proxy
-    if not active_ip:
+    if not settings.proxy_enabled or not settings.proxy_url or not settings.proxy_url.strip():
         return None
 
-    config = parse_ip_or_proxy(active_ip)
+    config = parse_ip_or_proxy(settings.proxy_url.strip())
     if not config:
         return None
 
@@ -238,19 +235,3 @@ def get_playwright_proxy_config() -> dict[str, str] | None:
         return {"server": f"http://127.0.0.1:{local_port}"}
 
     return config
-
-
-def log_network_ip_mode() -> None:
-    """Log current network origin (Own Direct IP vs Custom Configured IP)."""
-    active_ip = settings.active_ip_or_proxy
-    if not active_ip:
-        log.info("network.mode", status="Using Host Machine's Own Direct IP (No Proxy)")
-        return
-
-    config = parse_ip_or_proxy(active_ip)
-    if config:
-        server = config.get("server", "")
-        has_auth = "username" in config
-        log.info("network.mode", status="Using Configured Custom IP / Proxy", server=server, authenticated=has_auth)
-    else:
-        log.warning("network.mode", status="Custom IP configured but invalid; falling back to Host Own IP")

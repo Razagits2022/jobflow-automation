@@ -26,19 +26,36 @@ _UPLOAD_DIR = Path("artifacts") / "resumes"
 def _serialize_candidate_profile(candidate: Candidate) -> CandidateProfileSchema:
     """Combine Candidate columns and profile JSONB into the flat CandidateProfileSchema."""
     profile_data = candidate.profile or {}
+
+    resume_summary = profile_data.get("resumeSummary") or profile_data.get("resume_summary", "")
+    if not resume_summary:
+        # Synthesize from legacy fields on read
+        parts: list[str] = []
+        if title := profile_data.get("title"):
+            parts.append(f"Title: {title}")
+        years = profile_data.get("yearsExperience") or profile_data.get("years_experience")
+        if years is not None and str(years).strip():
+            parts.append(f"Years of Experience: {years}")
+        if edu := profile_data.get("education"):
+            parts.append(f"Education: {edu}")
+        if skills := profile_data.get("skills"):
+            if isinstance(skills, list):
+                parts.append("Skills: " + ", ".join(str(s) for s in skills if s))
+            elif isinstance(skills, str):
+                parts.append(f"Skills: {skills}")
+        resume_summary = "\n".join(parts).strip()
+        if resume_summary:
+            log.info("candidate.profile.legacy_shape_migrated", candidate_id=str(candidate.id))
+
     return CandidateProfileSchema(
         fullName=candidate.full_name,
         email=candidate.email,
         phone=candidate.phone or "",
         location=profile_data.get("location", ""),
-        title=profile_data.get("title", ""),
-        yearsExperience=profile_data.get("yearsExperience")
-        or profile_data.get("years_experience", 0),
         workAuthorized=profile_data.get(
-            "workAuthorized", profile_data.get("work_authorized", True)
+            "workAuthorized", profile_data.get("work_authorized", None)
         ),
-        education=profile_data.get("education", ""),
-        skills=profile_data.get("skills", []),
+        resumeSummary=resume_summary,
     )
 
 
@@ -67,11 +84,8 @@ async def update_candidate(
 
     profile_dict = {
         "location": payload.location,
-        "title": payload.title,
-        "yearsExperience": payload.years_experience,
         "workAuthorized": payload.work_authorized,
-        "education": payload.education,
-        "skills": payload.skills,
+        "resumeSummary": payload.resume_summary,
     }
 
     if candidate is None:
@@ -143,11 +157,8 @@ async def upload_resume(
 
     profile_dict = {
         "location": parsed_profile.location,
-        "title": parsed_profile.title,
-        "yearsExperience": parsed_profile.years_experience,
         "workAuthorized": parsed_profile.work_authorized,
-        "education": parsed_profile.education,
-        "skills": parsed_profile.skills,
+        "resumeSummary": parsed_profile.resume_summary,
     }
 
     if candidate is None:

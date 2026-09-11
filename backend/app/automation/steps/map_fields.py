@@ -32,6 +32,11 @@ class FieldMappingResponse(BaseModel):
 _MAP_FIELDS_SYSTEM_PROMPT = """You are an expert autonomous form-filling agent.
 Map candidate profile data and job facts into concrete values and actions for each form field.
 
+Candidate Profile Structure:
+- First-class fields: `fullName`, `email`, `phone`, `location`, `workAuthorized`.
+- Rich Background: `resumeSummary` (comprehensive free-text summary up to 8000 characters capturing candidate career history, job titles, years of experience, core technical & domain skills, key achievements, and education).
+- Always draw candidate qualifications, skills, career chronology, education details, and responses for custom application questions, why-this-role essays, or cover letters directly from `resumeSummary`.
+
 Output format must be ONLY valid JSON matching this schema:
 {
   "mappings": [
@@ -64,7 +69,11 @@ Special Handling for Questions NOT in Candidate's Resume:
 
 Constraints:
 1. For selects and radios, value MUST closely match one of the strings in `options`.
-2. For US Work Authorization, choose the option indicating authorization if authorized.
+2. For US Work Authorization:
+   - Check `workAuthorized` or candidate's `resumeSummary`.
+   - If stated as authorized/citizen, choose the option indicating authorization.
+   - If stated as requiring visa sponsorship, choose the option indicating visa sponsorship is required.
+   - If unstated or unknown, treat any work-authorization form field as unknown: use action "skip" for it unless the form provides an explicit 'Prefer not to say' option, in which case pick that.
 3. NEVER invent private credentials (SSN, credit card, passwords). Mark as "skip".
 4. Return ONLY the JSON object. No Markdown code fences or extra text."""
 
@@ -85,11 +94,13 @@ def _heuristic_map_fields(
     state = (
         candidate_profile.get("state")
         or candidate_profile.get("county")
-        or candidate_profile.get("province")
-        or candidate_profile.get("region")
-        or city
+        or candidate_profile.get("location", "")
     )
-    country = candidate_profile.get("country", "United Kingdom")
+    country = (
+        candidate_profile.get("country")
+        or candidate_profile.get("location", "")
+        or "United Kingdom"
+    )
     postal_code = (
         candidate_profile.get("postal_code")
         or candidate_profile.get("postalCode")
@@ -102,13 +113,23 @@ def _heuristic_map_fields(
         or candidate_profile.get("addressLine1", "")
     )
     location = candidate_profile.get("location") or city or "London"
+    summary = candidate_profile.get("resumeSummary") or candidate_profile.get("resume_summary", "")
     years_exp = str(
         candidate_profile.get("yearsExperience") or candidate_profile.get("years_experience", "3")
     )
     education = candidate_profile.get("education", "")
+    if not education and summary:
+        if "master" in summary.lower():
+            education = "Master's Degree"
+        elif "phd" in summary.lower() or "doctorate" in summary.lower():
+            education = "Ph.D."
+        else:
+            education = "Bachelor's Degree"
+    elif not education:
+        education = "Bachelor's Degree"
 
     for field in form_fields:
-        label = (field.get("label") or "").lower()
+        label = (field.get("label") or field.get("id") or "").lower()
         f_type = (field.get("type") or "text").lower()
         selector = field.get("selector") or ""
         options = field.get("options") or []
@@ -147,6 +168,62 @@ def _heuristic_map_fields(
             mappings.append(FieldMapping(selector=selector, value=email, action="fill"))
         elif "phone" in label or "mobile" in label:
             mappings.append(FieldMapping(selector=selector, value=phone, action="fill"))
+        elif "authoriz" in label or "sponsorship" in label or "legally" in label or "work permit" in label:
+            work_auth = candidate_profile.get("workAuthorized", candidate_profile.get("work_authorized"))
+            if work_auth is None:
+                summary_text = str(
+                    candidate_profile.get("resumeSummary")
+                    or candidate_profile.get("resume_summary")
+                    or ""
+                ).lower()
+                if any(w in summary_text for w in ["authorized to work", "us citizen", "u.s. citizen", "green card", "permanent resident"]):
+                    work_auth = True
+                elif any(w in summary_text for w in ["require sponsorship", "requires sponsorship", "visa sponsorship"]):
+                    work_auth = False
+
+            if work_auth is None:
+                # Unknown authorization — skip unless form offers 'prefer not to say'
+                prefer_not = next(
+                    (
+                        o
+                        for o in options
+                        if re.search(r"\b(prefer not to say|decline to state|not specified)\b", o, re.IGNORECASE)
+                    ),
+                    None,
+                )
+                if prefer_not:
+                    act_pn: Literal["select", "check"] = "select" if f_type == "select" else "check"
+                    mappings.append(FieldMapping(selector=selector, value=prefer_not, action=act_pn))
+                else:
+                    mappings.append(FieldMapping(selector=selector, value="", action="skip"))
+            elif work_auth is True:
+                if options:
+                    pos_opt = next(
+                        (
+                            o
+                            for o in options
+                            if re.search(r"\b(yes|authorized|no sponsorship)\b", o, re.IGNORECASE)
+                        ),
+                        options[0],
+                    )
+                    auth_act: Literal["select", "check"] = "select" if f_type == "select" else "check"
+                    mappings.append(FieldMapping(selector=selector, value=pos_opt, action=auth_act))
+                else:
+                    mappings.append(FieldMapping(selector=selector, value="Yes", action="fill"))
+            else:
+                if options:
+                    neg_opt = next(
+                        (
+                            o
+                            for o in options
+                            if re.search(r"\b(no\b|requires sponsorship|not authorized)\b", o, re.IGNORECASE)
+                        ),
+                        options[-1],
+                    )
+                    auth_neg_act: Literal["select", "check"] = "select" if f_type == "select" else "check"
+                    mappings.append(FieldMapping(selector=selector, value=neg_opt, action=auth_neg_act))
+                else:
+                    mappings.append(FieldMapping(selector=selector, value="No", action="fill"))
         elif "address line 2" in label or "address 2" in label:
             mappings.append(FieldMapping(selector=selector, value="", action="skip"))
         elif "address line 1" in label or "address 1" in label or ("address" in label and "line" in label):
@@ -154,7 +231,7 @@ def _heuristic_map_fields(
         elif "country" in label or "nation" in label:
             act_country: Literal["select", "fill"] = "select" if (f_type == "select" or options) else "fill"
             mappings.append(FieldMapping(selector=selector, value=country, action=act_country))
-        elif "county" in label or "state" in label or "province" in label or "region" in label:
+        elif "county" in label or "province" in label or "region" in label or ("state" in label and "united states" not in label):
             mappings.append(FieldMapping(selector=selector, value=state or city or "Greater London", action="fill"))
         elif "postcode" in label or "postal" in label or "zip" in label:
             mappings.append(FieldMapping(selector=selector, value=postal_code or "SW1A 1AA", action="fill"))
@@ -176,22 +253,6 @@ def _heuristic_map_fields(
                 mappings.append(FieldMapping(selector=selector, value=best_opt, action=act))
             else:
                 mappings.append(FieldMapping(selector=selector, value=years_exp, action="fill"))
-        elif "authoriz" in label or "sponsorship" in label or "legally" in label:
-            if options:
-                # Find positive option
-                pos_opt = next(
-                    (
-                        o
-                        for o in options
-                        if re.search(r"\b(yes|authorized|no sponsorship)\b", o, re.IGNORECASE)
-                    ),
-                    options[0],
-                )
-                auth_act: Literal["select", "check"] = "select" if f_type == "select" else "check"
-                mappings.append(FieldMapping(selector=selector, value=pos_opt, action=auth_act))
-
-            else:
-                mappings.append(FieldMapping(selector=selector, value="Yes", action="fill"))
         elif "referr" in label or "worked" in label or "former employee" in label or "previously employed" in label:
             # Negative answer to avoid conditional required questions like "Please name referrer"
             if options:
@@ -217,8 +278,8 @@ def _heuristic_map_fields(
                     ),
                     options[0],
                 )
-                act: Literal["select", "check"] = "select" if f_type == "select" else "check"
-                mappings.append(FieldMapping(selector=selector, value=source_opt, action=act))
+                act_source: Literal["select", "check"] = "select" if f_type == "select" else "check"
+                mappings.append(FieldMapping(selector=selector, value=source_opt, action=act_source))
             else:
                 mappings.append(FieldMapping(selector=selector, value="LinkedIn", action="fill"))
         elif "office" in label or "preferred location" in label:

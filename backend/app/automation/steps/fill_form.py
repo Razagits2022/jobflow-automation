@@ -18,13 +18,15 @@ log = structlog.get_logger(__name__)
 async def _is_custom_combobox(loc: Any) -> bool:
     """Check if an input is a react-select or custom combobox widget."""
     try:
-        return await loc.evaluate(
-            """(el) => {
+        return bool(
+            await loc.evaluate(
+                """(el) => {
                 if (el.getAttribute('role') === 'combobox') return true;
                 if (el.classList.contains('select__input')) return true;
                 if (el.closest('.select-shell') || el.closest('.select__container') || el.closest('.select__control')) return true;
                 return false;
             }"""
+            )
         )
     except Exception:
         return False
@@ -256,8 +258,8 @@ async def fill_form(
 
                 if is_formio:
                     log.info("fill_form.uploading_to_formio_component", selector=selector)
-                    with open(resume_path, "rb") as f:
-                        b64_data = base64.b64encode(f.read()).decode("ascii")
+                    with open(resume_path, "rb") as resume_file:
+                        b64_data = base64.b64encode(resume_file.read()).decode("ascii")
                     fname = Path(resume_path).name
                     await loc.evaluate(
                         """async (el, args) => {

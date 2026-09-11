@@ -8,18 +8,20 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { useAppStore, CandidateProfile } from "@/lib/store";
 import { Card, Button, Field } from "@/components/ui";
-import { FileText, ArrowUpRight, CheckCircle2, Plus, X, Upload, ShieldCheck, Clock, KeyRound, LogOut } from "lucide-react";
-import { getRemainingDays, revokeAccess } from "@/lib/access-code";
+import {
+  FileText,
+  ArrowUpRight,
+  CheckCircle2,
+  Upload,
+  Sparkles,
+} from "lucide-react";
 
 interface ProfileFormValues {
   fullName: string;
   email: string;
   phone: string;
   location: string;
-  title: string;
-  yearsExperience: number;
-  workAuthorized: boolean;
-  education: string;
+  resumeSummary: string;
 }
 
 const profileSchema = z.object({
@@ -27,10 +29,7 @@ const profileSchema = z.object({
   email: z.string().email("Please enter a valid email"),
   phone: z.string().min(7, "Please enter a valid phone number"),
   location: z.string().min(2, "Location is required"),
-  title: z.string().min(2, "Current title is required"),
-  yearsExperience: z.number().min(0, "Years must be 0 or more"),
-  workAuthorized: z.boolean(),
-  education: z.string().min(2, "Education is required"),
+  resumeSummary: z.string().max(8000, "Resume summary must be 8,000 characters or less"),
 });
 
 export default function ProfilePage() {
@@ -40,78 +39,37 @@ export default function ProfilePage() {
   const updateProfile = useAppStore((state) => state.updateProfile);
   const loadProfile = useAppStore((state) => state.loadProfile);
 
-  const [skills, setSkills] = useState<string[]>(() => profile?.skills || []);
-  const [prevProfile, setPrevProfile] = useState(profile);
-  const [skillInput, setSkillInput] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [accessDays, setAccessDays] = useState<number>(() => getRemainingDays());
 
   useEffect(() => {
     loadProfile();
-    setAccessDays(getRemainingDays());
   }, [loadProfile]);
-
-  const handleRevokeAccess = () => {
-    if (
-      window.confirm(
-        "Are you sure you want to reset your access code on this device? You will need to enter the code again to regain access."
-      )
-    ) {
-      revokeAccess();
-      router.replace("/accesscode");
-    }
-  };
-
-
-  // Sync skills if profile reference changes without calling setState in an effect
-  if (profile !== prevProfile) {
-    setPrevProfile(profile);
-    setSkills(profile?.skills || []);
-  }
 
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     values: profile
       ? {
-          fullName: profile.fullName,
-          email: profile.email,
-          phone: profile.phone,
-          location: profile.location,
-          title: profile.title,
-          yearsExperience: profile.yearsExperience,
-          workAuthorized: profile.workAuthorized,
-          education: profile.education,
+          fullName: profile.fullName || "",
+          email: profile.email || "",
+          phone: profile.phone || "",
+          location: profile.location || "",
+          resumeSummary: profile.resumeSummary || "",
         }
       : undefined,
   });
 
-  const handleAddSkill = () => {
-    const trimmed = skillInput.trim().replace(/,/g, "");
-    if (trimmed && !skills.includes(trimmed)) {
-      setSkills([...skills, trimmed]);
-      setSkillInput("");
-    }
-  };
-
-  const handleSkillKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" || e.key === ",") {
-      e.preventDefault();
-      handleAddSkill();
-    }
-  };
-
-  const handleRemoveSkill = (skillToRemove: string) => {
-    setSkills(skills.filter((s) => s !== skillToRemove));
-  };
+  const resumeSummaryValue = watch("resumeSummary") || "";
+  const charCount = resumeSummaryValue.length;
 
   const onSubmit = async (data: ProfileFormValues) => {
     const updated: CandidateProfile = {
+      ...(profile || {}),
       ...data,
-      skills,
     };
     await updateProfile(updated);
     setSaveSuccess(true);
@@ -174,6 +132,7 @@ export default function ProfilePage() {
       {/* Profile Form Card */}
       <Card>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          {/* 1. Full name & 2. Email address */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             <Field label="Full name" error={errors.fullName?.message} required>
               <input
@@ -192,6 +151,7 @@ export default function ProfilePage() {
             </Field>
           </div>
 
+          {/* 3. Phone number & 4. Location */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             <Field label="Phone number" error={errors.phone?.message} required>
               <input
@@ -211,157 +171,77 @@ export default function ProfilePage() {
             </Field>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-            <div className="sm:col-span-2">
-              <Field label="Current job title" error={errors.title?.message} required>
-                <input
-                  type="text"
-                  {...register("title")}
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-line bg-canvas text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-                />
-              </Field>
-            </div>
-
-            <div>
-              <Field
-                label="Years of experience"
-                error={errors.yearsExperience?.message}
-                required
-              >
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  {...register("yearsExperience")}
-                  className="w-full px-3.5 py-2.5 rounded-lg border border-line bg-canvas text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-                />
-              </Field>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            <Field label="Highest education" error={errors.education?.message} required>
-              <input
-                type="text"
-                {...register("education")}
-                placeholder="e.g. BS Computer Science"
-                className="w-full px-3.5 py-2.5 rounded-lg border border-line bg-canvas text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-              />
-            </Field>
-
-            <Field label="US work authorization" required>
-              <select
-                {...register("workAuthorized", {
-                  setValueAs: (v) => v === "true" || v === true,
-                })}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-line bg-canvas text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all cursor-pointer"
-              >
-                <option value="true">Yes — Authorized to work in the US</option>
-                <option value="false">No — Requires visa sponsorship</option>
-              </select>
-            </Field>
-          </div>
-
-          {/* Skills Tag Input */}
+          {/* 5. Resume summary */}
           <div className="space-y-2 pt-2 border-t border-line">
             <Field
-              label="Key skills & technologies"
-              hint="Press Enter or comma to add"
+              label="Resume summary"
+              hint="AI uses this detailed summary to tailor applications, answer custom questions, and write cover letters."
+              error={errors.resumeSummary?.message}
+              required
             >
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={skillInput}
-                  onChange={(e) => setSkillInput(e.target.value)}
-                  onKeyDown={handleSkillKeyDown}
-                  placeholder="e.g. React, Next.js, TypeScript"
-                  className="flex-1 px-3.5 py-2.5 rounded-lg border border-line bg-canvas text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+              <div className="relative">
+                <textarea
+                  rows={14}
+                  {...register("resumeSummary")}
+                  placeholder="Paste or edit your career summary, job titles, years of experience, core skills, key accomplishments, and education..."
+                  className="w-full px-3.5 py-3 rounded-lg border border-line bg-canvas text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all font-mono leading-relaxed resize-y min-h-[280px]"
                 />
-                <button
-                  type="button"
-                  onClick={handleAddSkill}
-                  className="px-4 py-2 rounded-lg bg-cream hover:bg-accent-soft text-ink font-semibold text-xs border border-line flex items-center gap-1 cursor-pointer transition-colors"
-                >
-                  <Plus className="w-4 h-4 text-accent" />
-                  <span>Add</span>
-                </button>
+                <div className="flex justify-between items-center text-xs mt-1.5 px-0.5">
+                  <span className="text-muted flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-accent" />
+                    <span>Extracted automatically with AI — edit freely anytime</span>
+                  </span>
+                  <span
+                    className={`font-mono text-xs font-semibold ${
+                      charCount > 5000
+                        ? "text-red-600"
+                        : charCount >= 4500
+                        ? "text-amber-600"
+                        : "text-muted"
+                    }`}
+                  >
+                    {charCount.toLocaleString()} / 5,000
+                  </span>
+                </div>
               </div>
             </Field>
-
-            {/* Skills Chips */}
-            <div className="flex flex-wrap gap-2 pt-2 min-h-[40px]">
-              {skills.map((skill) => (
-                <span
-                  key={skill}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-pill bg-cream text-ink text-xs font-medium border border-line shadow-3xs animate-in fade-in"
-                >
-                  <span>{skill}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveSkill(skill)}
-                    className="text-muted hover:text-red-600 rounded-full cursor-pointer transition-colors"
-                    aria-label={`Remove skill ${skill}`}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
           </div>
 
-          {/* Form Actions */}
-          <div className="pt-6 border-t border-line flex items-center justify-between">
-            <Button
-              type="submit"
-              variant="primary"
-              size="lg"
-              disabled={isSubmitting}
-              className="font-bold shadow-sm"
-            >
-              Save &amp; continue to Apply &rarr;
-            </Button>
+          {/* 7. Resume on file chip & 8. Save button */}
+          <div className="pt-6 border-t border-line flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+            <div className="inline-flex items-center gap-2.5 px-3.5 py-2 rounded-card bg-cream border border-line text-xs">
+              <FileText className="w-4 h-4 text-accent shrink-0" />
+              <span className="font-semibold text-ink truncate max-w-[180px] sm:max-w-[220px]">
+                {resumeFileName || "Resume on file"}
+              </span>
+              <Link
+                href="/onboarding"
+                className="text-accent hover:underline font-semibold flex items-center gap-0.5 ml-auto sm:ml-1 shrink-0"
+              >
+                <span>Replace</span>
+                <ArrowUpRight className="w-3 h-3" />
+              </Link>
+            </div>
 
-            {saveSuccess && (
-              <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-pill animate-in fade-in duration-200">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>Saved successfully</span>
-              </div>
-            )}
+            <div className="flex items-center gap-3 justify-end">
+              {saveSuccess && (
+                <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-pill animate-in fade-in duration-200">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Saved</span>
+                </div>
+              )}
+              <Button
+                type="submit"
+                variant="primary"
+                size="lg"
+                disabled={isSubmitting}
+                className="font-bold shadow-sm"
+              >
+                Save &amp; continue to Apply &rarr;
+              </Button>
+            </div>
           </div>
         </form>
-      </Card>
-
-      {/* Access Code & Security Card */}
-      <Card className="space-y-4 border-line/80 bg-canvas/60">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent shrink-0 mt-0.5">
-              <ShieldCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-ink">30-Day Access Pass</h3>
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-pill">
-                  <Clock className="w-3 h-3" /> {accessDays} days remaining
-                </span>
-              </div>
-              <p className="text-xs text-body mt-0.5">
-                This browser profile is authorized with a valid JobFlow access code.
-              </p>
-            </div>
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleRevokeAccess}
-            className="text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 border-rose-200 shrink-0 self-start sm:self-center"
-          >
-            <LogOut className="w-3.5 h-3.5 mr-1" />
-            <span>Reset Access Pass</span>
-          </Button>
-        </div>
       </Card>
     </div>
   );

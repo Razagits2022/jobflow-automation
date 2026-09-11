@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
+from urllib.parse import urlparse
 
 import structlog
 from playwright.async_api import (
@@ -19,7 +21,7 @@ from playwright.async_api import (
     async_playwright,
 )
 
-from app.automation.proxy import get_playwright_proxy_config, log_network_ip_mode
+from app.automation.proxy import get_playwright_proxy_config
 from app.core.config import settings
 
 log = structlog.get_logger(__name__)
@@ -47,19 +49,25 @@ async def managed_page() -> AsyncGenerator[tuple[BrowserContext, Page], None]:
     page: Page
 
     async with async_playwright() as playwright:
-        log_network_ip_mode()
         proxy_config = get_playwright_proxy_config()
-        browser = await playwright.chromium.launch(
-            headless=settings.browser_headless,
-            proxy=proxy_config,
-            args=[
+        launch_kwargs: dict[str, Any] = {
+            "headless": settings.browser_headless,
+            "args": [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
             ],
-        )
+        }
+        if proxy_config:
+            launch_kwargs["proxy"] = proxy_config
+            raw_proxy = settings.proxy_url or ""
+            parsed = urlparse(raw_proxy if "://" in raw_proxy else f"http://{raw_proxy}")
+            host_port = f"{parsed.hostname}:{parsed.port}" if parsed.port else (parsed.hostname or "")
+            log.info("browser.proxy_enabled", server=host_port or proxy_config.get("server", ""))
+
+        browser = await playwright.chromium.launch(**launch_kwargs)
         context = await browser.new_context(
             viewport={"width": 1280, "height": 900},
             user_agent=(

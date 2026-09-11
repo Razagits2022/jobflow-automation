@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urljoin
 from typing import Any
+from urllib.parse import urljoin
 
 import structlog
 from playwright.async_api import Page

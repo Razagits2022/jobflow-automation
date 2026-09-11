@@ -9,7 +9,7 @@ Uses CapSolver's ProxyLess task types:
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import structlog
@@ -88,7 +88,7 @@ async def _create_and_poll_task(
             status = poll_data.get("status")
             if status == "ready":
                 log.info("capsolver.task_solved", task_id=task_id, elapsed=elapsed)
-                return poll_data.get("solution", {})
+                return cast(dict[str, Any], poll_data.get("solution", {}))
 
         raise CapSolverError(f"CapSolver task timed out after {timeout_seconds}s.")
 
@@ -107,7 +107,7 @@ async def solve_recaptcha_v2(
         "isInvisible": is_invisible,
     }
     solution = await _create_and_poll_task(task)
-    token = solution.get("gRecaptchaResponse", "")
+    token = cast(str, solution.get("gRecaptchaResponse", ""))
     if not token:
         raise CapSolverError("CapSolver solved reCAPTCHA v2 but returned an empty token.")
     return token
@@ -129,7 +129,7 @@ async def solve_turnstile(
         task["metadata"] = {"action": action}
 
     solution = await _create_and_poll_task(task)
-    token = solution.get("token", "")
+    token = cast(str, solution.get("token", ""))
     if not token:
         raise CapSolverError("CapSolver solved Turnstile but returned an empty token.")
     return token
@@ -149,7 +149,7 @@ async def solve_recaptcha_v3(
         "pageAction": page_action,
     }
     solution = await _create_and_poll_task(task)
-    token = solution.get("gRecaptchaResponse", "")
+    token = cast(str, solution.get("gRecaptchaResponse", ""))
     if not token:
         raise CapSolverError("CapSolver solved reCAPTCHA v3 but returned an empty token.")
     return token

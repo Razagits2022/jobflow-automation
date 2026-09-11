@@ -40,17 +40,14 @@ class CandidateRead(CandidateBase):
 class CandidateProfileSchema(BaseModel):
     """Full flat candidate profile that matches the frontend CandidateProfile interface."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     full_name: str = Field(..., alias="fullName")
     email: EmailStr
     phone: str = ""
     location: str = ""
-    title: str = ""
-    years_experience: int = Field(default=0, alias="yearsExperience")
-    work_authorized: bool = Field(default=True, alias="workAuthorized")
-    education: str = ""
-    skills: list[str] = Field(default_factory=list)
+    work_authorized: bool | None = Field(default=None, alias="workAuthorized")
+    resume_summary: str = Field(default="", max_length=8000, alias="resumeSummary")
 
 
 class ResumeRead(BaseModel):

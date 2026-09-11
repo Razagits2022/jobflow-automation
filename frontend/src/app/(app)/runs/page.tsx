@@ -33,7 +33,7 @@ function getDomain(url: string) {
 function formatFieldLabel(raw: string): string {
   if (!raw) return "Field";
   if (raw.startsWith("[data-jf-id")) return "Consent / Site Cookies";
-  let s = raw
+  const s = raw
     .replace(/^#/, "")
     .replace(/^input\[name="/i, "")
     .replace(/"\]$/i, "")
