@@ -20,6 +20,7 @@ from app.automation.errors import RunStatus
 from app.automation.pipeline import run_application as _run_pipeline
 from app.core.config import settings
 from app.core.logging import configure_logging
+from app.core.redis import clean_redis_url
 from app.db.session import AsyncSessionLocal
 from app.models.job import JobPosting
 from app.models.run import ApplicationRun
@@ -118,7 +119,7 @@ class WorkerSettings:
     functions = [run_application]
     on_startup = startup
     on_shutdown = shutdown
-    redis_settings = RedisSettings.from_dsn(settings.redis_url.replace("localhost", "127.0.0.1"))
+    redis_settings = RedisSettings.from_dsn(clean_redis_url(settings.redis_url))
     max_jobs = settings.worker_concurrency
     job_timeout = 600  # 10 minutes max per job
     keep_result = 3600  # keep job results for 1 hour
