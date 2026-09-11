@@ -60,7 +60,7 @@ _DOM_EXTRACTION_SCRIPT = """
             }
         }
         // 6. placeholder if meaningful (not generic like 'Start typing...' or 'Type here...')
-        if (el.placeholder && cleanText(el.placeholder) && !/^(start typing|type here|search|select|choose|enter|\.\.\.)/i.test(el.placeholder.trim())) {
+        if (el.placeholder && cleanText(el.placeholder) && !/^(start typing|type here|search|select|choose|enter|\\.\\.\\.)/i.test(el.placeholder.trim())) {
             return cleanText(el.placeholder);
         }
         // 7. Preceding sibling or parent header

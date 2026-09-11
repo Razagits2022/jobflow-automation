@@ -52,6 +52,7 @@ async def managed_page() -> AsyncGenerator[tuple[BrowserContext, Page], None]:
         proxy_config = get_playwright_proxy_config()
         launch_kwargs: dict[str, Any] = {
             "headless": settings.browser_headless,
+            "channel": "chromium",  # use full chromium, not chrome-headless-shell
             "args": [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
