@@ -6,12 +6,14 @@ import shutil
 import uuid
 from pathlib import Path
 
+import httpx
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.core.config import settings
 from app.integrations.resume import extract_resume_text, parse_resume_text
 from app.models.candidate import Candidate, Resume
 from app.schemas.candidate import CandidateProfileSchema
@@ -176,10 +178,33 @@ async def upload_resume(
         candidate.phone = parsed_profile.phone
         candidate.profile = profile_dict
 
-    # Record resume row
+    # Record resume row & persist to Supabase Storage if configured
+    storage_key = str(saved_path)
+    if settings.storage_driver == "supabase" and settings.supabase_url and settings.supabase_service_role_key:
+        try:
+            base_url = settings.supabase_url.rstrip("/")
+            bucket = settings.supabase_storage_bucket
+            supabase_key = f"resumes/{saved_filename}"
+            upload_url = f"{base_url}/storage/v1/object/{bucket}/{supabase_key}"
+            headers = {
+                "Authorization": f"Bearer {settings.supabase_service_role_key}",
+                "apikey": settings.supabase_service_role_key,
+                "x-upsert": "true",
+            }
+            with open(saved_path, "rb") as f_data:
+                file_bytes = f_data.read()
+            content_type = file.content_type or "application/octet-stream"
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                res = await client.post(upload_url, content=file_bytes, headers={**headers, "Content-Type": content_type})
+                if res.is_success:
+                    storage_key = supabase_key
+                    log.info("candidate.resume_uploaded_to_supabase", key=storage_key)
+        except Exception as sup_err:
+            log.warning("candidate.resume_supabase_upload_failed", error=str(sup_err))
+
     resume_row = Resume(
         candidate_id=candidate.id,
-        storage_key=str(saved_path),
+        storage_key=storage_key,
         filename=filename,
     )
     db.add(resume_row)

@@ -51,16 +51,24 @@ _DOM_EXTRACTION_SCRIPT = """
                 return cleanText(target.textContent);
             }
         }
-        // 5. placeholder
-        if (el.placeholder && cleanText(el.placeholder)) {
+        // 5. Container / Field Entry label (e.g. Ashby, Greenhouse, Lever field groups)
+        const fieldEntry = el.closest("[class*='fieldEntry'], [class*='field-entry'], [class*='form-group'], [class*='form-field'], [class*='field_'], .field");
+        if (fieldEntry) {
+            const entryLabel = fieldEntry.querySelector("label, [class*='question-title'], [class*='heading']");
+            if (entryLabel && cleanText(entryLabel.textContent)) {
+                return cleanText(entryLabel.textContent);
+            }
+        }
+        // 6. placeholder if meaningful (not generic like 'Start typing...' or 'Type here...')
+        if (el.placeholder && cleanText(el.placeholder) && !/^(start typing|type here|search|select|choose|enter|\.\.\.)/i.test(el.placeholder.trim())) {
             return cleanText(el.placeholder);
         }
-        // 6. Preceding sibling or parent header
+        // 7. Preceding sibling or parent header
         const prev = el.previousElementSibling;
         if (prev && cleanText(prev.textContent) && cleanText(prev.textContent).length < 80) {
             return cleanText(prev.textContent);
         }
-        // 7. name attribute as fallback
+        // 8. name attribute as fallback
         return el.name || el.id || "Unknown Field";
     }
 
@@ -194,13 +202,14 @@ _DOM_EXTRACTION_SCRIPT = """
         // Compute reliable selector
         let selector = "";
         if (el.id) {
-            if (/^[a-zA-Z0-9_-]+$/.test(el.id)) {
+            // CSS ID selector #<id> is only valid if it starts with a letter or underscore
+            if (/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(el.id)) {
                 selector = `#${el.id}`;
             } else {
                 selector = `[id="${el.id.replace(/"/g, '\\"')}"]`;
             }
         } else if (el.name) {
-            if (/^[a-zA-Z0-9_-]+$/.test(el.name)) {
+            if (/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(el.name)) {
                 selector = `${tag.toLowerCase()}[name="${el.name}"]`;
             } else {
                 selector = `${tag.toLowerCase()}[name="${el.name.replace(/"/g, '\\"')}"]`;
@@ -215,7 +224,9 @@ _DOM_EXTRACTION_SCRIPT = """
             el.classList.contains("select__input") ||
             el.getAttribute("role") === "combobox" ||
             el.closest(".select-shell") ||
-            el.closest(".select__container")
+            el.closest(".select__container") ||
+            (typeof el.className === "string" && el.className.includes("input-autocomplete")) ||
+            el.placeholder === "Start typing..."
         );
         if (isReactSelect && type === "text") {
             type = "select";
@@ -357,6 +368,24 @@ _DOM_EXTRACTION_SCRIPT = """
     // Append grouped radios
     for (const group of Object.values(radioGroups)) {
         fields.push(group);
+    }
+
+    // Append Ashby yes/no button groups (.ashby-application-form-input-yesno)
+    const ashbyYesNoGroups = Array.from(baseContainer.querySelectorAll('.ashby-application-form-input-yesno, div[class*="input-yesno"]')).filter(g => g.querySelector('button[data-option]'));
+    for (const group of ashbyYesNoGroups) {
+        const entry = group.closest('[class*="fieldEntry"], [class*="field-entry"]') || group.parentElement;
+        const labelEl = entry ? entry.querySelector('label, [class*="question-title"], [class*="heading"]') : null;
+        const rawLabel = labelEl ? cleanText(labelEl.textContent) : "Yes/No Question";
+        counter++;
+        group.setAttribute("data-jf-id", String(counter));
+        fields.push({
+            id: `ashby_yesno_${counter}`,
+            label: rawLabel.replace(/\\*$/, "").trim(),
+            type: "radio",
+            required: rawLabel.includes("*") || Boolean(entry && entry.querySelector('[class*="required"]')),
+            options: ["Yes", "No"],
+            selector: `[data-jf-id="${counter}"]`,
+        });
     }
 
     return fields;

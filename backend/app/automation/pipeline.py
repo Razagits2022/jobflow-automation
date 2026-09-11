@@ -141,9 +141,74 @@ async def run_application(run_id: uuid.UUID) -> None:
                     "skills": cand_profile_data.get("skills", []),
                 }
 
+                local_resumes_dir = Path("artifacts") / "resumes"
+                local_resumes_dir.mkdir(parents=True, exist_ok=True)
+
                 if cand.resumes:
                     latest = sorted(cand.resumes, key=lambda r: r.created_at, reverse=True)[0]
-                    resume_path = latest.storage_key
+                    cand_storage_key = latest.storage_key
+                    clean_name = Path(latest.filename or cand_storage_key).name
+                    candidate_local = local_resumes_dir / clean_name
+
+                    if Path(cand_storage_key).exists():
+                        resume_path = cand_storage_key
+                    elif candidate_local.exists():
+                        resume_path = str(candidate_local)
+                    elif (
+                        settings.storage_driver == "supabase"
+                        and settings.supabase_url
+                        and settings.supabase_service_role_key
+                    ):
+                        try:
+                            base_url = settings.supabase_url.rstrip("/")
+                            bucket = settings.supabase_storage_bucket
+                            headers = {
+                                "Authorization": f"Bearer {settings.supabase_service_role_key}",
+                                "apikey": settings.supabase_service_role_key,
+                            }
+                            # Keys to attempt downloading
+                            keys_to_try = [
+                                cand_storage_key,
+                                f"resumes/{clean_name}",
+                                clean_name,
+                            ]
+                            async with httpx.AsyncClient(timeout=30.0) as client:
+                                for key in keys_to_try:
+                                    dl_url = f"{base_url}/storage/v1/object/{bucket}/{key}"
+                                    resp = await client.get(dl_url, headers=headers)
+                                    if resp.is_success and resp.content:
+                                        candidate_local.write_bytes(resp.content)
+                                        resume_path = str(candidate_local)
+                                        bound_log.info(
+                                            "pipeline.resume_downloaded_from_supabase",
+                                            key=key,
+                                            path=resume_path,
+                                        )
+                                        break
+                        except Exception as dl_err:
+                            bound_log.warning(
+                                "pipeline.resume_supabase_download_failed",
+                                error=str(dl_err),
+                            )
+
+                # Resilient fallback: If no file exists on disk, synthesize from profile so ATS never blocks
+                if not resume_path or not Path(resume_path).exists():
+                    try:
+                        safe_name = (cand.full_name or "Candidate").replace(" ", "_")
+                        synth_file = local_resumes_dir / f"{cand.id}_{safe_name}_Resume.txt"
+                        synth_content = (
+                            f"Full Name: {cand.full_name}\n"
+                            f"Email: {cand.email}\n"
+                            f"Phone: {cand.phone or ''}\n"
+                            f"Location: {candidate_profile.get('location', '')}\n\n"
+                            f"PROFILE & EXPERIENCE SUMMARY:\n"
+                            f"{candidate_profile.get('resumeSummary', '')}\n"
+                        )
+                        synth_file.write_text(synth_content, encoding="utf-8")
+                        resume_path = str(synth_file)
+                        bound_log.info("pipeline.synthesized_fallback_resume", path=resume_path)
+                    except Exception as synth_err:
+                        bound_log.warning("pipeline.fallback_resume_failed", error=str(synth_err))
 
             # 3. Zyte extraction
             bound_log.debug("pipeline.fetching_job_content", url=job_url)

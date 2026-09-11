@@ -57,40 +57,48 @@ def normalize_asyncpg_url(raw_url: str) -> tuple[str, dict[str, Any]]:
     ctx.verify_mode = ssl.CERT_NONE
     connect_args: dict[str, Any] = {"ssl": ctx}
 
+    if parsed.port == 6543:
+        # PgBouncer transaction mode cannot handle prepared statement caching
+        connect_args["statement_cache_size"] = 0
+
     return normalized_url, connect_args
 
 
 url, connect_args = normalize_asyncpg_url(settings.database_url)
 
-# ---------------------------------------------------------------------------
-# Engine — Session mode (port 5432, recommended for persistent backend):
-# Supports normal connection pooling and prepared statements.
-# ---------------------------------------------------------------------------
-engine: AsyncEngine = create_async_engine(
-    url,
-    connect_args=connect_args,
-    echo=settings.db_echo,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-    pool_recycle=60,
-    pool_timeout=30,
-)
+# Detect if using PgBouncer transaction pooler (port 6543)
+parsed_url = urlsplit(url)
+is_transaction_pooler = (parsed_url.port == 6543)
 
-# ---------------------------------------------------------------------------
-# Alternative: Transaction mode (port 6543)
-# If ever switching to Transaction mode (PgBouncer pooler):
-#
-#   from sqlalchemy.pool import NullPool
-#   engine = create_async_engine(
-#       _clean_db_url,
-#       poolclass=NullPool,
-#       connect_args={"statement_cache_size": 0, "ssl": ssl.create_default_context()},
-#   )
-#
-# Note: advisory locks, prepared statements, and LISTEN/NOTIFY do NOT work in
-# Transaction mode. Session mode (port 5432) or Direct mode is preferred.
-# ---------------------------------------------------------------------------
+if is_transaction_pooler:
+    # ---------------------------------------------------------------------------
+    # Transaction mode (port 6543):
+    # PgBouncer routes transactions dynamically; use NullPool and disable prepared statements.
+    # ---------------------------------------------------------------------------
+    from sqlalchemy.pool import NullPool
+
+    engine: AsyncEngine = create_async_engine(
+        url,
+        poolclass=NullPool,
+        connect_args=connect_args,
+        echo=settings.db_echo,
+    )
+else:
+    # ---------------------------------------------------------------------------
+    # Session mode (port 5432) or direct connection:
+    # Use conservative pool limits to respect Supabase free-tier limits (15 total connections).
+    # ---------------------------------------------------------------------------
+    engine: AsyncEngine = create_async_engine(
+        url,
+        connect_args=connect_args,
+        echo=settings.db_echo,
+        pool_size=5,
+        max_overflow=5,
+        pool_pre_ping=True,
+        pool_recycle=60,
+        pool_timeout=30,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Session factory

@@ -20,9 +20,11 @@ async def _is_custom_combobox(loc: Any) -> bool:
     try:
         return bool(
             await loc.evaluate(
-                """(el) => {
+                """el => {
                 if (el.getAttribute('role') === 'combobox') return true;
                 if (el.classList.contains('select__input')) return true;
+                if (typeof el.className === 'string' && el.className.includes('input-autocomplete')) return true;
+                if (el.placeholder === 'Start typing...') return true;
                 if (el.closest('.select-shell') || el.closest('.select__container') || el.closest('.select__control')) return true;
                 return false;
             }"""
@@ -59,11 +61,11 @@ async def _fill_combobox_or_select(
 
     is_location = any(
         w in label_hint.lower() or w in selector.lower()
-        for w in ["location", "city", "address"]
+        for w in ["location", "city", "address", "country", "based in"]
     )
 
     if is_location:
-        # Location autocomplete (e.g. Greenhouse geocode-earth API)
+        # Location autocomplete (e.g. Greenhouse geocode-earth API or Ashby location)
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Backspace")
 
@@ -78,7 +80,9 @@ async def _fill_combobox_or_select(
             ".select__menu div.select__option, "
             ".select__menu-list > div, "
             "div.select__option, "
-            ".react-select__option"
+            ".react-select__option, "
+            "[role='option'], "
+            ".ashby-application-form-input-autocomplete-popup-result"
         )
         for _ in range(14):
             await page.wait_for_timeout(250)
@@ -106,9 +110,16 @@ async def _fill_combobox_or_select(
             else:
                 await page.keyboard.press("Enter")
     else:
+        # Try typing into input to trigger custom options
+        try:
+            await loc.fill(value or "")
+            await page.wait_for_timeout(250)
+        except Exception:
+            pass
+
         # Standard React-Select or custom combobox
         opts = page.locator(
-            ".react-select__option, .select__menu div.select__option, .select__menu-list > div, div.select__option, [class*='-option']"
+            ".react-select__option, .select__menu div.select__option, .select__menu-list > div, div.select__option, [class*='-option'], [role='option'], .ashby-application-form-input-autocomplete-popup-result"
         )
         count = await opts.count()
         if count == 0:
@@ -353,7 +364,22 @@ async def fill_form(
                 except Exception:
                     pass
 
-                if is_native_select:
+                # Check for Ashby Yes/No toggle button group
+                is_ashby_yesno = False
+                try:
+                    is_ashby_yesno = await loc.evaluate(
+                        "el => el.classList.contains('ashby-application-form-input-yesno') || !!el.querySelector('button[data-option]')"
+                    )
+                except Exception:
+                    pass
+
+                if is_ashby_yesno:
+                    opt_key = "yes" if str(value).lower().strip() in ("yes", "true", "1", "y") else "no"
+                    btn = loc.locator(f'button[data-option="{opt_key}"]').first
+                    if await btn.count() > 0:
+                        await btn.click()
+                        await page.wait_for_timeout(200)
+                elif is_native_select:
                     selected_via_js = False
                     try:
                         selected_via_js = await loc.evaluate("""(el, targetVal) => {
@@ -430,7 +456,22 @@ async def fill_form(
                 except Exception:
                     pass
 
-                if is_checkbox:
+                # Check for Ashby Yes/No toggle button group
+                is_ashby_yesno = False
+                try:
+                    is_ashby_yesno = await loc.evaluate(
+                        "el => el.classList.contains('ashby-application-form-input-yesno') || !!el.querySelector('button[data-option]')"
+                    )
+                except Exception:
+                    pass
+
+                if is_ashby_yesno:
+                    opt_key = "yes" if str(value).lower().strip() in ("yes", "true", "1", "y") else "no"
+                    btn = loc.locator(f'button[data-option="{opt_key}"]').first
+                    if await btn.count() > 0:
+                        await btn.click()
+                        await page.wait_for_timeout(200)
+                elif is_checkbox:
                     truthy = str(value).lower().strip() in ("on", "true", "1", "yes", "checked", "") or bool(value)
                     if truthy:
                         try:
