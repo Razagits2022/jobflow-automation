@@ -11,13 +11,17 @@ _pool: ArqRedis | None = None
 
 
 def clean_redis_url(url: str) -> str:
-    """Strip any accidental 'redis-cli --tls -u' prefix from connection string."""
+    """Strip any accidental 'redis-cli --tls -u' prefix and ensure rediss:// for TLS."""
     clean = url.strip()
+    has_tls = "--tls" in clean or "upstash.io" in clean
     if "-u " in clean:
         clean = clean.split("-u ", 1)[1].strip()
     elif clean.startswith("redis-cli"):
         clean = clean.replace("redis-cli", "", 1).strip()
-    return clean.replace("localhost", "127.0.0.1")
+    clean = clean.replace("localhost", "127.0.0.1")
+    if has_tls and clean.startswith("redis://"):
+        clean = "rediss://" + clean[len("redis://") :]
+    return clean
 
 
 async def get_arq_pool() -> ArqRedis:
