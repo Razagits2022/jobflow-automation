@@ -66,6 +66,18 @@ async def run_application(ctx: dict[str, Any], run_id: str) -> None:
         # Safety net: log the error but do not re-raise.
         # Re-raising would crash the Arq worker process.
         bound_log.exception("worker.task_unhandled_error", error=str(exc))
+        try:
+            async with AsyncSessionLocal() as session:
+                run = await session.get(ApplicationRun, run_uuid)
+                if run is not None and run.status in (
+                    RunStatus.QUEUED.value,
+                    RunStatus.RUNNING.value,
+                ):
+                    run.status = RunStatus.FAILED.value
+                    run.error_reason = f"Worker-level failure: {type(exc).__name__}: {exc}"
+                    await session.commit()
+        except Exception as db_exc:  # noqa: BLE001
+            bound_log.error("worker.failed_status_write_failed", error=str(db_exc))
 
 
 async def _is_duplicate(run_id: uuid.UUID) -> bool:

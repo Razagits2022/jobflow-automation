@@ -8,8 +8,8 @@ artifacts on every outcome, and ensures the browser is always closed.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -18,7 +18,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.config import settings
 from app.automation.artifacts import save_artifact
 from app.automation.ats.registry import get_adapter
 from app.automation.browser import managed_page
@@ -37,6 +36,7 @@ from app.automation.steps import (
     submit,
     validate,
 )
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.integrations import zyte
 from app.models.candidate import Candidate
@@ -96,9 +96,11 @@ async def run_application(run_id: uuid.UUID) -> None:
     artifact_key: str | None = None
     artifact_label: str = "failure"
     recorded_field_results: list[dict[str, str]] = []
+    page = None
 
-    async with managed_page() as (_context, page):
-        try:
+    try:
+        async with managed_page() as (_context, _page):
+            page = _page
             # 1. Mark as RUNNING
             async with AsyncSessionLocal() as session:
                 await _update_run_status(session, run_id, RunStatus.RUNNING)
@@ -138,7 +140,7 @@ async def run_application(run_id: uuid.UUID) -> None:
                     "yearsExperience": cand_profile_data.get("yearsExperience")
                     or cand_profile_data.get("years_experience", 0),
                     "workAuthorized": cand_profile_data.get(
-                        "workAuthorized", cand_profile_data.get("work_authorized", True)
+                        "workAuthorized", cand_profile_data.get("work_authorized", None)
                     ),
                     "education": cand_profile_data.get("education", ""),
                     "skills": cand_profile_data.get("skills", []),
@@ -366,26 +368,27 @@ async def run_application(run_id: uuid.UUID) -> None:
                 else:
                     raise RuntimeError(f"Unexpected submission outcome: {outcome}")
 
-        except CaptchaEncounteredError as exc:
-            final_status = RunStatus.FAILED_CAPTCHA
-            error_reason = str(exc)
-            artifact_label = "captcha"
-            bound_log.warning("pipeline.captcha_encountered", reason=error_reason)
+    except CaptchaEncounteredError as exc:
+        final_status = RunStatus.FAILED_CAPTCHA
+        error_reason = str(exc)
+        artifact_label = "captcha"
+        bound_log.warning("pipeline.captcha_encountered", reason=error_reason)
 
-        except ValidationFailedError as exc:
-            final_status = RunStatus.FAILED_VALIDATION
-            error_reason = str(exc)
-            artifact_label = "validation_error"
-            bound_log.warning("pipeline.validation_failed", reason=error_reason)
+    except ValidationFailedError as exc:
+        final_status = RunStatus.FAILED_VALIDATION
+        error_reason = str(exc)
+        artifact_label = "validation_error"
+        bound_log.warning("pipeline.validation_failed", reason=error_reason)
 
-        except Exception as exc:  # noqa: BLE001
-            final_status = RunStatus.FAILED
-            error_reason = f"{type(exc).__name__}: {exc}"
-            artifact_label = "failure"
-            bound_log.exception("pipeline.failed", reason=error_reason)
+    except Exception as exc:  # noqa: BLE001
+        final_status = RunStatus.FAILED
+        error_reason = f"{type(exc).__name__}: {exc}"
+        artifact_label = "failure"
+        bound_log.exception("pipeline.failed", reason=error_reason)
 
-        finally:
-            # Always save screenshot & HTML artifacts
+    finally:
+        # Save artifacts only if we actually have a page
+        if page is not None:
             try:
                 artifact_key = await save_artifact(
                     page=page,
@@ -395,25 +398,25 @@ async def run_application(run_id: uuid.UUID) -> None:
             except Exception as art_exc:  # noqa: BLE001
                 bound_log.error("pipeline.artifact_save_failed", error=str(art_exc))
 
-            # Update final status in DB with retries
-            for attempt in range(3):
-                try:
-                    async with AsyncSessionLocal() as session:
-                        await _update_run_status(
-                            session,
-                            run_id,
-                            final_status,
-                            error_reason=error_reason,
-                            artifact_key=artifact_key,
-                        )
-                    break
-                except Exception as db_exc:
-                    if attempt < 2:
-                        await asyncio.sleep(1.5)
-                    else:
-                        bound_log.error("pipeline.final_status_update_failed", error=str(db_exc))
+        # ALWAYS write final status, with retries — even if page is None
+        for attempt in range(3):
+            try:
+                async with AsyncSessionLocal() as session:
+                    await _update_run_status(
+                        session,
+                        run_id,
+                        final_status,
+                        error_reason=error_reason,
+                        artifact_key=artifact_key,
+                    )
+                break
+            except Exception as db_exc:
+                if attempt < 2:
+                    await asyncio.sleep(1.5)
+                else:
+                    bound_log.error("pipeline.final_status_update_failed", error=str(db_exc))
 
-            bound_log.info("pipeline.finished", status=final_status.value)
+        bound_log.info("pipeline.finished", status=final_status.value)
 
 
 async def _update_run_status(

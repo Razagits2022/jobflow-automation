@@ -88,7 +88,7 @@ else:
     # Session mode (port 5432) or direct connection:
     # Use conservative pool limits to respect Supabase free-tier limits (15 total connections).
     # ---------------------------------------------------------------------------
-    engine: AsyncEngine = create_async_engine(
+    engine = create_async_engine(
         url,
         connect_args=connect_args,
         echo=settings.db_echo,
