@@ -96,13 +96,40 @@ async def solve_captcha_if_present(*, page: Page) -> bool:
         except Exception:
             pass
 
-        log.info("solve_captcha.recaptcha_found", sitekey=recaptcha_key, is_v3=is_v3, is_invisible=is_invisible, url=page_url)
+        api_domain = None
+        action = "job_apply" if "ashbyhq.com" in page_url else "submit"
+        try:
+            domain_eval = await page.evaluate("""() => {
+                const scripts = Array.from(document.querySelectorAll('script[src*="recaptcha"]'));
+                for (const s of scripts) {
+                    const src = s.src || '';
+                    if (src.includes('recaptcha.net')) return 'https://www.recaptcha.net/';
+                    if (src.includes('google.com')) return 'https://www.google.com/';
+                }
+                return null;
+            }""")
+            if domain_eval:
+                api_domain = domain_eval
+
+            if action == "submit":
+                detected_action = await page.evaluate("""() => {
+                    const el = document.querySelector('[data-recaptcha-action], [data-action]');
+                    return el ? (el.getAttribute('data-recaptcha-action') || el.getAttribute('data-action')) : null;
+                }""")
+                if detected_action:
+                    action = detected_action
+        except Exception:
+            pass
+
+        log.info("solve_captcha.recaptcha_found", sitekey=recaptcha_key, is_v3=is_v3, is_invisible=is_invisible, action=action, api_domain=api_domain, url=page_url)
         try:
             if is_v3:
                 token = await capsolver.solve_recaptcha_v3(
                     website_url=page_url,
                     sitekey=recaptcha_key,
-                    page_action="submit",
+                    page_action=action,
+                    api_domain=api_domain,
+                    min_score=0.9,
                 )
             else:
                 token = await capsolver.solve_recaptcha_v2(
@@ -114,13 +141,19 @@ async def solve_captcha_if_present(*, page: Page) -> bool:
             # Inject token, hook grecaptcha.execute, and invoke client callbacks recursively
             await page.evaluate(
                 """(token) => {
-                    // Hook grecaptcha.execute for reCAPTCHA v3 / invisible Promise-based callers
+                    // Hook grecaptcha.execute and enterprise for reCAPTCHA v3 / invisible Promise-based callers
+                    const hookObj = (target) => {
+                        if (target && typeof target === 'object') {
+                            try {
+                                target.execute = function(...args) {
+                                    return Promise.resolve(token);
+                                };
+                            } catch (e) {}
+                        }
+                    };
                     if (window.grecaptcha) {
-                        try {
-                            window.grecaptcha.execute = function(...args) {
-                                return Promise.resolve(token);
-                            };
-                        } catch (e) {}
+                        hookObj(window.grecaptcha);
+                        hookObj(window.grecaptcha.enterprise);
                     }
 
                     const elements = document.querySelectorAll(

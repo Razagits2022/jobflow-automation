@@ -140,14 +140,20 @@ async def solve_recaptcha_v3(
     sitekey: str,
     *,
     page_action: str = "submit",
+    api_domain: str | None = None,
+    min_score: float = 0.9,
 ) -> str:
     """Solve Google reCAPTCHA v3 and return the response token."""
-    task = {
+    task: dict[str, Any] = {
         "type": "ReCaptchaV3TaskProxyLess",
         "websiteURL": website_url,
         "websiteKey": sitekey,
         "pageAction": page_action,
+        "minScore": min_score,
     }
+    if api_domain:
+        task["apiDomain"] = api_domain
+
     solution = await _create_and_poll_task(task)
     token = cast(str, solution.get("gRecaptchaResponse", ""))
     if not token:

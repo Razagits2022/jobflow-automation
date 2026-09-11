@@ -43,18 +43,23 @@ async def _fill_combobox_or_select(
     selector: str = "",
 ) -> None:
     """Handle custom JS comboboxes, react-select, and location autocomplete widgets."""
-    # Open dropdown by triggering mouse event on the react-select/custom control container
     try:
-        await loc.evaluate(
-            """el => {
-                const c = el.closest('[class*="-control"], [class*="select__control"], .select-shell, .select__container') || el;
-                c.scrollIntoView({block: 'center'});
-                c.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
-            }"""
-        )
+        await loc.scroll_into_view_if_needed(timeout=1500)
+    except Exception:
+        pass
+
+    try:
+        await loc.click(force=True, timeout=2000)
     except Exception:
         try:
-            await loc.click(force=True, timeout=2000)
+            await loc.evaluate(
+                """el => {
+                    const c = el.closest('[class*="-control"], [class*="select__control"], .select-shell, .select__container') || el;
+                    c.scrollIntoView({block: 'center'});
+                    c.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                    el.focus();
+                }"""
+            )
         except Exception:
             pass
     await page.wait_for_timeout(250)
@@ -66,8 +71,11 @@ async def _fill_combobox_or_select(
 
     if is_location:
         # Location autocomplete (e.g. Greenhouse geocode-earth API or Ashby location)
-        await page.keyboard.press("Control+A")
-        await page.keyboard.press("Backspace")
+        try:
+            await loc.fill("")
+        except Exception:
+            await page.keyboard.press("Control+A")
+            await page.keyboard.press("Backspace")
 
         city_query = value.split(",")[0].strip() if "," in value else value.strip()
         await page.keyboard.type(city_query, delay=75)
@@ -244,6 +252,9 @@ async def fill_form(
     # Pass 1: Execute all file upload fields first
     has_uploaded = False
     for mapping in upload_items:
+        if has_uploaded:
+            log.debug("fill_form.skipping_duplicate_upload", selector=mapping.selector)
+            continue
         selector = mapping.selector
         label = "Resume / CV"
         if not selector:
@@ -376,9 +387,17 @@ async def fill_form(
                 if is_ashby_yesno:
                     opt_key = "yes" if str(value).lower().strip() in ("yes", "true", "1", "y") else "no"
                     btn = loc.locator(f'button[data-option="{opt_key}"]').first
+                    if await btn.count() == 0:
+                        btn = page.locator(f'{selector} button[data-option="{opt_key}"]').first
+                    if await btn.count() == 0:
+                        btn = page.locator(f'button[data-option="{opt_key}"]').first
                     if await btn.count() > 0:
-                        await btn.click()
-                        await page.wait_for_timeout(200)
+                        try:
+                            await btn.scroll_into_view_if_needed(timeout=1500)
+                        except Exception:
+                            pass
+                        await btn.click(timeout=3000)
+                        await page.wait_for_timeout(300)
                 elif is_native_select:
                     selected_via_js = False
                     try:
@@ -459,18 +478,35 @@ async def fill_form(
                 # Check for Ashby Yes/No toggle button group
                 is_ashby_yesno = False
                 try:
-                    is_ashby_yesno = await loc.evaluate(
-                        "el => el.classList.contains('ashby-application-form-input-yesno') || !!el.querySelector('button[data-option]')"
+                    is_ashby_yesno = (
+                        "yesno" in selector
+                        or await loc.evaluate(
+                            "el => el.classList.contains('ashby-application-form-input-yesno') || !!el.querySelector('button[data-option]')"
+                        )
                     )
                 except Exception:
                     pass
 
+                if not is_ashby_yesno:
+                    try:
+                        is_ashby_yesno = (await page.locator(f"{selector} button[data-option]").count() > 0)
+                    except Exception:
+                        pass
+
                 if is_ashby_yesno:
                     opt_key = "yes" if str(value).lower().strip() in ("yes", "true", "1", "y") else "no"
                     btn = loc.locator(f'button[data-option="{opt_key}"]').first
+                    if await btn.count() == 0:
+                        btn = page.locator(f'{selector} button[data-option="{opt_key}"]').first
+                    if await btn.count() == 0:
+                        btn = page.locator(f'button[data-option="{opt_key}"]').first
                     if await btn.count() > 0:
-                        await btn.click()
-                        await page.wait_for_timeout(200)
+                        try:
+                            await btn.scroll_into_view_if_needed(timeout=1500)
+                        except Exception:
+                            pass
+                        await btn.click(timeout=3000)
+                        await page.wait_for_timeout(300)
                 elif is_checkbox:
                     truthy = str(value).lower().strip() in ("on", "true", "1", "yes", "checked", "") or bool(value)
                     if truthy:
@@ -542,6 +578,9 @@ async def fill_form(
             try:
                 field_loc = page.locator(mapping.selector).first
                 if await field_loc.count() > 0 and await field_loc.is_visible(timeout=200):
+                    # Never safety-sweep custom comboboxes / autocompletes — raw fill wipes selected tokens
+                    if await _is_custom_combobox(field_loc):
+                        continue
                     cur_val = await field_loc.input_value()
                     if not cur_val or cur_val.strip() == "":
                         log.info("fill_form.safety_sweep_refilling", selector=mapping.selector, value=mapping.value)

@@ -215,8 +215,15 @@ _DOM_EXTRACTION_SCRIPT = """
                 selector = `${tag.toLowerCase()}[name="${el.name.replace(/"/g, '\\"')}"]`;
             }
         } else {
-            el.setAttribute("data-jf-id", String(counter));
-            selector = `[data-jf-id="${counter}"]`;
+            const entry = el.closest("[data-field-path]");
+            if (entry && entry.getAttribute("data-field-path")) {
+                const fp = entry.getAttribute("data-field-path");
+                selector = `[data-field-path="${fp}"] input`;
+            } else {
+                counter++;
+                el.setAttribute("data-jf-id", String(counter));
+                selector = `[data-jf-id="${counter}"]`;
+            }
         }
 
         // Detect React-Select or custom combobox
@@ -376,15 +383,28 @@ _DOM_EXTRACTION_SCRIPT = """
         const entry = group.closest('[class*="fieldEntry"], [class*="field-entry"]') || group.parentElement;
         const labelEl = entry ? entry.querySelector('label, [class*="question-title"], [class*="heading"]') : null;
         const rawLabel = labelEl ? cleanText(labelEl.textContent) : "Yes/No Question";
-        counter++;
-        group.setAttribute("data-jf-id", String(counter));
+        const fieldPath = entry ? entry.getAttribute("data-field-path") : null;
+        const input = group.querySelector("input[name]");
+        const inputName = input ? input.getAttribute("name") : null;
+
+        let selector = "";
+        if (fieldPath) {
+            selector = `[data-field-path="${fieldPath}"]`;
+        } else if (inputName) {
+            selector = `input[name="${inputName}"]`;
+        } else {
+            counter++;
+            group.setAttribute("data-jf-id", String(counter));
+            selector = `[data-jf-id="${counter}"]`;
+        }
+
         fields.push({
-            id: `ashby_yesno_${counter}`,
+            id: fieldPath || inputName || `ashby_yesno_${counter}`,
             label: rawLabel.replace(/\\*$/, "").trim(),
             type: "radio",
             required: rawLabel.includes("*") || Boolean(entry && entry.querySelector('[class*="required"]')),
             options: ["Yes", "No"],
-            selector: `[data-jf-id="${counter}"]`,
+            selector: selector,
         });
     }
 

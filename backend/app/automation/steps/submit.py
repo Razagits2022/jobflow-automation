@@ -356,7 +356,7 @@ async def submit(*, page: Page, run_id: uuid.UUID) -> str:
 
         if error_texts:
             joined_errs = "; ".join(error_texts)
-            if any("captcha" in err.lower() or "recaptcha" in err.lower() for err in error_texts):
+            if any(k in err.lower() for err in error_texts for k in ["captcha", "recaptcha", "spam"]):
                 log.warning("submit.captcha_error_detected", errors=joined_errs, waited_seconds=waited_seconds)
                 # CapSolver auto-recovery if configured
                 if settings.capsolver_api_key and "your-" not in settings.capsolver_api_key.lower() and not captcha_recovery_attempted:
@@ -372,7 +372,7 @@ async def submit(*, page: Page, run_id: uuid.UUID) -> str:
                             await submit_btn.evaluate("btn => btn.click()")
                         error_texts.clear()
                         continue
-                raise CaptchaEncounteredError(f"Submission blocked by CAPTCHA: {joined_errs}")
+                raise CaptchaEncounteredError(f"Submission blocked by CAPTCHA/Anti-Spam: {joined_errs}")
             log.warning("submit.validation_errors_detected", errors=joined_errs, waited_seconds=waited_seconds)
             raise ValidationFailedError(
                 f"Form validation errors flagged after clicking submit: {joined_errs}"
