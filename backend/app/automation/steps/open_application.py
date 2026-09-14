@@ -83,7 +83,9 @@ async def dismiss_overlays(page: Page) -> None:
                     try { bd.remove(); } catch(e) {}
                 }
                 // 3. Click cookie accept buttons (strictly excluding info/policy links)
-                const cookieBtns = document.querySelectorAll('#moove_gdpr_cookie_info_bar button, #onetrust-accept-btn-handler, [class*="cookie"] button, button[id*="cookie"]');
+                const cookieBtns = Array.from(document.querySelectorAll(
+                    '#moove_gdpr_cookie_info_bar button, #onetrust-accept-btn-handler, [class*="cookie"] button, button[id*="cookie"], button, a.btn'
+                ));
                 for (const cb of cookieBtns) {
                     if (cb.tagName === "A") {
                         const href = (cb.getAttribute("href") || "").toLowerCase();
@@ -92,7 +94,7 @@ async def dismiss_overlays(page: Page) -> None:
                         }
                     }
                     const txt = (cb.textContent || "").trim();
-                    if (/accept|agree|allow|ok/i.test(txt)) {
+                    if (/^(accept all|accept all cookies|accept cookies|accept|agree|allow all|allow|ok)$/i.test(txt)) {
                         try { cb.click(); } catch(e) {}
                         break;
                     }

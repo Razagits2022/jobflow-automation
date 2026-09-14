@@ -33,7 +33,11 @@ def _build_client() -> AsyncOpenAI:
     For DeepSeek: uses the DeepSeek base URL and API key.
     For OpenAI:   uses the OpenAI default base URL.
     """
-    kwargs: dict[str, Any] = {"api_key": settings.active_ai_api_key}
+    kwargs: dict[str, Any] = {
+        "api_key": settings.active_ai_api_key,
+        "timeout": 30.0,
+        "max_retries": 1,
+    }
     if settings.active_ai_base_url:
         kwargs["base_url"] = settings.active_ai_base_url
     return AsyncOpenAI(**kwargs)
