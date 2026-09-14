@@ -66,14 +66,17 @@ Special Handling for Questions NOT in Candidate's Resume:
 4. General Required Fields with missing resume info:
    - If required dropdown/radio: NEVER skip. Pick the most sensible default or the first valid option.
    - If required text/textarea: Fill a sensible professional answer (e.g. "LinkedIn", "N/A", or a brief relevant sentence based on job title).
+5. "Total work experience" / "Years of experience" / numeric questions:
+   - Provide ONLY digits (e.g. "5", NOT "5 years" or "5+ years"), so numeric/integer validation on ATS forms (like Ashby) never fails.
 
 Constraints:
-1. For selects and radios, value MUST closely match one of the strings in `options`.
-2. For US Work Authorization:
+2. For US Work Authorization / Citizenship / Visa Sponsorship / Legal Status:
    - Check `workAuthorized` or candidate's `resumeSummary`.
-   - If stated as authorized/citizen, choose the option indicating authorization.
+   - If stated as authorized/citizen, choose the option indicating authorization (e.g. "Yes", "US Citizen", "Authorized to work in the US").
    - If stated as requiring visa sponsorship, choose the option indicating visa sponsorship is required.
-   - If unstated or unknown, treat any work-authorization form field as unknown: use action "skip" for it unless the form provides an explicit 'Prefer not to say' option, in which case pick that.
+   - If unstated or unknown:
+     * If the field is REQUIRED (or dropdown/radio): NEVER skip! Default to authorized ("Yes", "US Citizen", "Authorized to work", or first positive option) so the form is never blocked.
+     * If optional and has 'Prefer not to say', pick that.
 3. NEVER invent private credentials (SSN, credit card, passwords). Mark as "skip".
 4. Return ONLY the JSON object. No Markdown code fences or extra text."""
 
@@ -241,18 +244,19 @@ def _heuristic_map_fields(
             mappings.append(
                 FieldMapping(selector=selector, value=location or address or "Remote", action="fill")
             )
-        elif "year" in label and "experience" in label:
+        elif ("year" in label or "experience" in label or "total work" in label) and not any(w in label for w in ["summary", "description", "explain"]):
+            digits_only = re.sub(r"[^\d]", "", years_exp) or "3"
             if f_type in ("select", "radio") and options:
                 # Pick closest option
                 best_opt = options[0]
                 for opt in options:
-                    if years_exp in opt:
+                    if digits_only in opt or years_exp in opt:
                         best_opt = opt
                         break
                 act: Literal["select", "check"] = "select" if f_type == "select" else "check"
                 mappings.append(FieldMapping(selector=selector, value=best_opt, action=act))
             else:
-                mappings.append(FieldMapping(selector=selector, value=years_exp, action="fill"))
+                mappings.append(FieldMapping(selector=selector, value=digits_only, action="fill"))
         elif "referr" in label or "worked" in label or "former employee" in label or "previously employed" in label:
             # Negative answer to avoid conditional required questions like "Please name referrer"
             if options:
@@ -391,7 +395,48 @@ async def map_fields(
             temperature=0.0,
             max_tokens=token_cap,
         )
-        return res.mappings
+        mappings = res.mappings
+
+        # Safety guard: Ensure NO required field is skipped or left unmapped
+        required_fields = [f for f in form_fields if f.get("required") and f.get("selector")]
+        mapped_by_sel = {m.selector: m for m in mappings if m.selector}
+
+        for req in required_fields:
+            sel = req.get("selector", "")
+            opts = req.get("options", [])
+            ftype = req.get("type", "text")
+
+            # Find best affirmative option if options exist
+            best_opt = opts[0] if opts else "Yes"
+            for opt in opts:
+                if any(k in str(opt).lower() for k in ["yes", "citizen", "authorized", "eligible", "resident"]):
+                    best_opt = opt
+                    break
+
+            if sel in mapped_by_sel:
+                m = mapped_by_sel[sel]
+                if m.action == "skip" or not m.value:
+                    m.value = best_opt if opts or ftype in ("select", "radio") else "N/A"
+                    m.action = "select" if ftype == "select" else ("check" if ftype == "radio" else "fill")
+                    log.info("map_fields.unskipped_required_field", selector=sel, value=m.value, action=m.action)
+            else:
+                new_m = FieldMapping(
+                    selector=sel,
+                    value=best_opt if opts or ftype in ("select", "radio") else "N/A",
+                    action="select" if ftype == "select" else ("check" if ftype == "radio" else "fill"),
+                )
+        # Post-process: Normalize experience / numeric values to digits so schema validators never fail
+        selector_to_field = {f.get("selector"): f for f in form_fields if f.get("selector")}
+        for m in mappings:
+            field = selector_to_field.get(m.selector, {})
+            label = (field.get("label") or "").lower()
+            if m.action == "fill" and any(k in label for k in ["experience", "how many years", "total work", "years of"]):
+                if not any(k in label for k in ["summary", "description", "explain", "why"]):
+                    digits = re.search(r"\d+", m.value)
+                    if digits:
+                        m.value = digits.group(0)
+
+        return mappings
     except Exception as exc:  # noqa: BLE001
         log.error("map_fields.failed_falling_back", error=str(exc))
         return _heuristic_map_fields(form_fields, candidate_profile)

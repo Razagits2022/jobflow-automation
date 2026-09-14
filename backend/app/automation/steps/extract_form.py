@@ -254,7 +254,7 @@ _DOM_EXTRACTION_SCRIPT = """
                     }
                     const fieldset = node.closest("fieldset");
                     if (fieldset) {
-                        const legend = fieldset.querySelector("legend");
+                        const legend = fieldset.querySelector("legend, [class*='label'], [class*='title'], [class*='heading']");
                         if (legend && cleanText(legend.textContent)) return cleanText(legend.textContent);
                     }
                     const container = node.closest(".pad-v-3, .form-group, fieldset");
@@ -274,7 +274,8 @@ _DOM_EXTRACTION_SCRIPT = """
                     selector: `input[name="${el.name.replace(/"/g, '\\"')}"]`,
                 };
             }
-            const optVal = cleanText(el.value) || label;
+            const rawVal = el.getAttribute("value");
+            const optVal = (rawVal && rawVal.toLowerCase() !== "on" ? cleanText(rawVal) : "") || label;
             if (optVal && !radioGroups[el.name].options.includes(optVal)) {
                 radioGroups[el.name].options.push(optVal);
             }

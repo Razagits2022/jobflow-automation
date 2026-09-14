@@ -318,10 +318,27 @@ async def fill_form(
             log.warning("fill_form.upload_failed", selector=selector, error=str(exc))
             results.append({"field_label": label, "mapped_value": mapping.value, "status": "failed"})
 
-    # If a resume was uploaded, wait 3 seconds for background ATS parsers (e.g. Phenom People) to complete
+    # If a resume was uploaded, wait for background ATS parsers (e.g. Ashby, Phenom People) to complete
     if has_uploaded:
         log.info("fill_form.waiting_for_ats_resume_parser_to_settle")
-        await page.wait_for_timeout(3000)
+        for _ in range(16):
+            await page.wait_for_timeout(500)
+            settled = False
+            try:
+                settled = await page.evaluate("""() => {
+                    const bodyText = document.body ? document.body.innerText : '';
+                    if (bodyText.includes('Parsing your resume') || bodyText.includes('Autofilling key fields')) {
+                        return false;
+                    }
+                    const spinner = document.querySelector('.spinner, [role="progressbar"], [class*="Autofill-pending"]');
+                    if (spinner && spinner.offsetWidth > 0) return false;
+                    return true;
+                }""")
+            except Exception:
+                settled = True
+            if settled:
+                break
+        await page.wait_for_timeout(1000)
 
     # Pass 2: Fill text, select, and checkbox fields
     for mapping in other_items:
@@ -358,10 +375,46 @@ async def fill_form(
                             fill_val = clean_digits[2:]
                         elif clean_digits.startswith("+"):
                             fill_val = re.sub(r"^\+\d{1,3}", "", clean_digits)
+                    elif any(k in label.lower() for k in ["experience", "how many years", "total work", "years of"]) and any(c.isdigit() for c in str(fill_val)):
+                        if not any(w in label.lower() for w in ["summary", "description", "details", "explain", "why"]):
+                            digits = re.search(r"\d+", str(fill_val))
+                            if digits:
+                                fill_val = digits.group(0)
+                    else:
+                        try:
+                            input_type = await loc.get_attribute("type")
+                            if input_type == "number":
+                                digits = re.search(r"\d+", str(fill_val))
+                                if digits:
+                                    fill_val = digits.group(0)
+                        except Exception:
+                            pass
 
-                    await loc.fill(fill_val, timeout=4000)
+                    # Type cleanly to trigger native keypress and synthetic React handlers
                     try:
-                        await loc.evaluate("el => { el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); el.dispatchEvent(new Event('blur', {bubbles: true})); }")
+                        await loc.click(force=True, timeout=1000)
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.press("Backspace")
+                        await loc.press_sequentially(fill_val, delay=10)
+                    except Exception:
+                        await loc.fill(fill_val, timeout=4000)
+
+                    # Also invoke prototype value descriptor setter to guarantee React state sync
+                    try:
+                        await loc.evaluate("""(el, val) => {
+                            if (el._valueTracker) {
+                                el._valueTracker.setValue('');
+                            }
+                            const desc = Object.getOwnPropertyDescriptor(
+                                el instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+                                'value'
+                            );
+                            if (desc && desc.set) desc.set.call(el, val);
+                            else el.value = val;
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                            el.dispatchEvent(new Event('blur', { bubbles: true }));
+                        }""", fill_val)
                     except Exception:
                         pass
                 results.append({"field_label": label, "mapped_value": value, "status": "filled"})
@@ -527,42 +580,80 @@ async def fill_form(
                         except Exception:
                             pass
                 else:
-                    radio = page.locator(f'{selector}[value="{value}"]').first
-                    if await radio.count() > 0:
+                    clicked = False
+                    clean_val = str(value).strip(";").strip()
+
+                    # 1. Direct label click matching option text (triggers native HTML & React state)
+                    if clean_val and clean_val.lower() not in ("on", "true", "yes"):
+                        opt_label = page.locator("label").filter(has_text=clean_val).first
+                        if await opt_label.count() > 0:
+                            try:
+                                await opt_label.scroll_into_view_if_needed(timeout=1000)
+                                await opt_label.click(force=True, timeout=2000)
+                                clicked = True
+                            except Exception:
+                                pass
+
+                    # 2. Try input matching value attribute
+                    if not clicked:
+                        radio = page.locator(f'{selector}[value="{value}"]').first
+                        if await radio.count() > 0:
+                            try:
+                                await radio.check(force=True, timeout=2000)
+                                await radio.evaluate("el => { el.dispatchEvent(new Event('change', {bubbles: true})); el.dispatchEvent(new Event('input', {bubbles: true})); }")
+                                clicked = True
+                            except Exception:
+                                try:
+                                    await radio.evaluate("""el => {
+                                        el.checked = true;
+                                        (el.closest('label') || document.querySelector(`label[for='${CSS.escape(el.id)}']`) || el).click();
+                                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                                        el.dispatchEvent(new Event('input', {bubbles: true}));
+                                    }""")
+                                    clicked = True
+                                except Exception:
+                                    pass
+
+                    # 3. Match role="radio" or card with text
+                    if not clicked:
+                        role_radio = page.locator(f'[role="radio"]:has-text("{clean_val}"), button:has-text("{clean_val}")').first
+                        if await role_radio.count() > 0:
+                            try:
+                                await role_radio.click(force=True, timeout=2000)
+                                clicked = True
+                            except Exception:
+                                pass
+
+                    # 4. Fallback: click first label or radio in this radio group so it is NEVER left unselected
+                    if not clicked:
                         try:
-                            await radio.check(force=True, timeout=3000)
-                            await radio.evaluate("el => { el.dispatchEvent(new Event('change', {bubbles: true})); el.dispatchEvent(new Event('input', {bubbles: true})); }")
+                            radio_inp = page.locator(selector).first
+                            if await radio_inp.count() > 0:
+                                inp_id = await radio_inp.get_attribute("id")
+                                if inp_id:
+                                    fallback_lbl = page.locator(f'label[for="{inp_id}"]').first
+                                    if await fallback_lbl.count() > 0:
+                                        await fallback_lbl.click(force=True, timeout=2000)
+                                        clicked = True
+                                if not clicked:
+                                    await radio_inp.check(force=True, timeout=2000)
+                                    await radio_inp.evaluate("el => (el.closest('label') || el).click()")
+                                    clicked = True
                         except Exception:
-                            await radio.evaluate("""el => {
-                                el.checked = true;
-                                (el.closest('label') || document.querySelector(`label[for='${CSS.escape(el.id)}']`) || el).click();
-                                el.dispatchEvent(new Event('change', {bubbles: true}));
-                                el.dispatchEvent(new Event('input', {bubbles: true}));
+                            pass
+
+                    # Guarantee React state catches the checked radio
+                    try:
+                        radio_checked = page.locator("input[type='radio']:checked, input[type='checkbox']:checked").first
+                        if await radio_checked.count() > 0:
+                            await radio_checked.evaluate("""(el) => {
+                                const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked');
+                                if (desc && desc.set) desc.set.call(el, true);
+                                el.dispatchEvent(new Event('input', { bubbles: true }));
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
                             }""")
-                    else:
-                        matched = page.locator("label").filter(has_text=value).locator("input").first
-                        if await matched.count() > 0:
-                            try:
-                                await matched.check(force=True, timeout=3000)
-                                await matched.evaluate("el => { el.dispatchEvent(new Event('change', {bubbles: true})); el.dispatchEvent(new Event('input', {bubbles: true})); }")
-                            except Exception:
-                                await matched.evaluate("""el => {
-                                    el.checked = true;
-                                    (el.closest('label') || el).click();
-                                    el.dispatchEvent(new Event('change', {bubbles: true}));
-                                    el.dispatchEvent(new Event('input', {bubbles: true}));
-                                }""")
-                        else:
-                            try:
-                                await loc.check(force=True, timeout=3000)
-                                await loc.evaluate("el => { el.dispatchEvent(new Event('change', {bubbles: true})); el.dispatchEvent(new Event('input', {bubbles: true})); }")
-                            except Exception:
-                                await loc.evaluate("""el => {
-                                    el.checked = true;
-                                    (el.closest('label') || document.querySelector(`label[for='${CSS.escape(el.id)}']`) || el).click();
-                                    el.dispatchEvent(new Event('change', {bubbles: true}));
-                                    el.dispatchEvent(new Event('input', {bubbles: true}));
-                                }""")
+                    except Exception:
+                        pass
 
                 results.append({"field_label": label, "mapped_value": value, "status": "filled"})
 

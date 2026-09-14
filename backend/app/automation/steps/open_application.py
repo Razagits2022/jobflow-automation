@@ -14,7 +14,53 @@ from app.core.config import settings
 log = structlog.get_logger(__name__)
 
 _APPLY_BUTTON_REGEX = re.compile(
-    r"\b(apply now|apply for this job|apply for vacancy|apply on company site|apply online|apply to job|start application|apply)\b",
+    r"\b("
+    r"apply now|"
+    r"apply for this job|"
+    r"apply for this role|"
+    r"apply for position|"
+    r"apply for vacancy|"
+    r"apply on company site|"
+    r"apply on website|"
+    r"apply online|"
+    r"apply to job|"
+    r"start application|"
+    r"go to application|"
+    r"continue to application|"
+    r"proceed to application|"
+    r"open application|"
+    r"fill out application|"
+    r"apply manually|"
+    r"apply with resume|"
+    r"apply without resume|"
+    r"click here to apply|"
+    r"click to apply|"
+    r"apply directly|"
+    r"apply externally|"
+    r"i'm interested|"
+    r"apply"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_INTERMEDIATE_NAV_REGEX = re.compile(
+    r"\b("
+    r"go to form|"
+    r"go to application|"
+    r"continue to form|"
+    r"continue to application|"
+    r"proceed to form|"
+    r"proceed to application|"
+    r"click on this to go form page|"
+    r"click here to go to form|"
+    r"fill out form|"
+    r"complete application|"
+    r"next step|"
+    r"proceed|"
+    r"continue|"
+    r"get started|"
+    r"start"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -62,9 +108,14 @@ async def _is_application_form_present(page: Page) -> bool:
     try:
         # Check for dynamic SPA form loading (e.g. Ashby, Form.io, loading spinners)
         try:
-            loading_indicator = page.locator(':has-text("Fetching application form"), [class*="loadingIndicator"], [class*="loading-spinner"], .formio-form, [data-sf-form-id]')
+            loading_indicator = page.locator(
+                ':has-text("Fetching application form"), [class*="loadingIndicator"], [class*="loading-spinner"], .formio-form, [data-sf-form-id]'
+            )
             if await loading_indicator.count() > 0 or any(k in page.url.lower() for k in ["ashbyhq.com", "lorien"]):
-                await page.wait_for_selector('input[name*="first" i], input[name*="email" i], input[type="email"], input[type="file"], form, [class*="_applicationForm_"]', timeout=4000)
+                await page.wait_for_selector(
+                    'input[name*="first" i], input[name*="email" i], input[type="email"], input[type="file"], form, [class*="_applicationForm_"]',
+                    timeout=3000,
+                )
         except Exception:
             pass
 
@@ -79,31 +130,84 @@ async def _is_application_form_present(page: Page) -> bool:
             except Exception:
                 pass
 
-        # 2. If a visible file upload input or Form.io file component exists, it is an application form
-        if await page.locator('input[type="file"]:visible, .formio-component-file:visible, [class*="formio-component-file"]:visible').count() > 0:
+        # Evaluate candidate input signals in a single DOM query
+        form_status = await page.evaluate("""() => {
+            const fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(
+                el => el.offsetWidth > 0 || el.offsetHeight > 0 || (el.parentElement && el.parentElement.offsetWidth > 0)
+            );
+            const hasFileInput = fileInputs.length > 0;
+
+            const hasAshbyForm = !!document.querySelector('[class*="_applicationForm_"], form[class*="application"]');
+            const hasFormio = !!document.querySelector('.formio-component-file, [class*="formio-component"]');
+
+            const candidateKeywords = [
+                "email", "phone", "first_name", "last_name", "firstname", "lastname",
+                "full_name", "fullname", "name", "resume", "cv", "candidate", "applicant",
+                "linkedin", "location", "address"
+            ];
+            const allInputs = Array.from(document.querySelectorAll(
+                'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select'
+            )).filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+
+            let candidateFields = 0;
+            let hasEmailField = false;
+
+            for (const el of allInputs) {
+                if (el.type === 'email' || el.autocomplete === 'email') {
+                    hasEmailField = true;
+                    candidateFields++;
+                    continue;
+                }
+                const name = (el.name || '').toLowerCase();
+                const id = (el.id || '').toLowerCase();
+                const placeholder = (el.placeholder || '').toLowerCase();
+                const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+                const parent = el.closest('label, div[class*="field"], div[class*="form-group"]') || el.parentElement;
+                const parentText = parent ? (parent.innerText || '').toLowerCase().slice(0, 50) : '';
+
+                const combined = `${name} ${id} ${placeholder} ${ariaLabel} ${parentText}`;
+                if (candidateKeywords.some(kw => combined.includes(kw))) {
+                    candidateFields++;
+                }
+            }
+
+            const applyBtns = Array.from(document.querySelectorAll('a, button')).filter(el => {
+                if (el.offsetWidth <= 0 || el.offsetHeight <= 0) return false;
+                const txt = (el.innerText || '').trim().toLowerCase();
+                return /^(apply now|apply for this job|apply on company site|apply online|start application)$/i.test(txt);
+            });
+
+            return {
+                hasFileInput,
+                hasAshbyForm,
+                hasFormio,
+                hasEmailField,
+                candidateFields,
+                totalInputs: allInputs.length,
+                applyBtnCount: applyBtns.length
+            };
+        }""")
+
+        # If a file input exists and candidate fields >= 1 or totalInputs >= 2, it is a form
+        if form_status.get("hasFileInput") and (form_status.get("candidateFields", 0) >= 1 or form_status.get("totalInputs", 0) >= 2):
             return True
 
-        # 3. Inspect candidate-relevant visible field indicators (Name, Email, Phone, CV)
-        candidate_keywords = ["email", "phone", "first_name", "last_name", "firstname", "lastname", "resume", "cv", "candidate", "applicant"]
-        inputs = page.locator("input:visible:not([type=hidden]):not([type=submit]):not([type=button]), textarea:visible, select:visible")
-        count = await inputs.count()
-        if count >= 2:
-            candidate_fields_found = 0
-            for i in range(min(count, 15)):
-                inp = inputs.nth(i)
-                name_attr = (await inp.get_attribute("name") or "").lower()
-                id_attr = (await inp.get_attribute("id") or "").lower()
-                aria_label = (await inp.get_attribute("aria-label") or "").lower()
-                combined = f"{name_attr} {id_attr} {aria_label}"
-                if any(kw in combined for kw in candidate_keywords):
-                    candidate_fields_found += 1
-            if candidate_fields_found >= 2:
-                return True
+        # If hasAshbyForm or hasFormio and has inputs
+        if (form_status.get("hasAshbyForm") or form_status.get("hasFormio")) and form_status.get("totalInputs", 0) >= 2:
+            return True
 
-        # If there are multiple visible Apply Now buttons and no candidate fields, it is a directory / search results page
-        apply_links_count = await page.locator("a:visible, button:visible").filter(has_text=_APPLY_BUTTON_REGEX).count()
-        if apply_links_count >= 2:
-            return False
+        # If email field + at least 1 other candidate field
+        if form_status.get("hasEmailField") and form_status.get("candidateFields", 0) >= 2:
+            return True
+
+        # General threshold: at least 2 candidate-specific fields and not an overview page with multiple apply buttons
+        if form_status.get("candidateFields", 0) >= 2 and form_status.get("applyBtnCount", 0) < 3:
+            return True
+
+        # If page URL ends with /application or /apply and has inputs
+        path = page.url.lower().rstrip("/")
+        if (path.endswith("/application") or path.endswith("/apply") or "/job-apply" in path) and form_status.get("totalInputs", 0) >= 2:
+            return True
 
         return False
     except Exception:
@@ -190,7 +294,7 @@ async def open_application(
     page: Page,
     job_url: str,
     candidate_profile: dict[str, Any] | None = None,
-    max_hops: int = 3,
+    max_hops: int = 5,
 ) -> Page:
     """Navigate to the job posting and autonomously reach the application form.
 
@@ -198,7 +302,8 @@ async def open_application(
     - Multi-hop navigation (e.g. Job board landing page → Company page → Application form)
     - Handling new tabs/popups (returns the active Page reference to the caller)
     - Auto-dismissing cookie/country modal overlays
-    - Expanding collapsible job application forms (e.g. WP Job Manager)
+    - Expanding collapsible job application forms (e.g. WP Job Manager, accordion `#apply`)
+    - Intermediate progression pages ("Go to application", "Proceed to form", "Apply manually")
     - Directory/homepage matching based on candidate profile
 
     Returns:
@@ -211,15 +316,19 @@ async def open_application(
     await dismiss_overlays(page)
 
     current_page = page
+    visited_urls: set[str] = set()
+
     for hop in range(1, max_hops + 1):
+        clean_url = current_page.url.split("#")[0].rstrip("/")
+        visited_urls.add(clean_url)
         log.info("open_application.evaluating_page", hop=hop, url=current_page.url)
 
-        # Check if form is already present
+        # 1. Check if form is already present
         if await _is_application_form_present(current_page):
             log.info("open_application.form_confirmed", hop=hop, url=current_page.url)
             return current_page
 
-        # If on hop 1 and candidate profile is available, check for directory/homepage job cards
+        # 2. If on hop 1 and candidate profile is available, check for directory/homepage job cards
         if hop == 1 and candidate_profile:
             matched_job = await _match_and_navigate_directory(current_page, candidate_profile)
             if matched_job:
@@ -228,39 +337,47 @@ async def open_application(
                     log.info("open_application.form_confirmed_post_directory", url=current_page.url)
                     return current_page
 
-        # Find visible Apply CTA
+        # 3. Locate CTA button / link:
+        # Tier 1: Explicit apply buttons / links
         apply_locators = current_page.locator("a:visible, button:visible").filter(has_text=_APPLY_BUTTON_REGEX)
         try:
-            await apply_locators.first.wait_for(state="visible", timeout=2500)
+            await apply_locators.first.wait_for(state="visible", timeout=2000)
         except Exception:
             pass
 
-        cta_count = await apply_locators.count()
-
         cta = None
+        cta_count = await apply_locators.count()
         for i in range(cta_count):
             candidate_cta = apply_locators.nth(i)
             try:
-                if await candidate_cta.is_visible(timeout=500):
-                    # Exclude navigation items in headers/footers like 'Submit Vacancy' or 'Submit CV'
+                if await candidate_cta.is_visible(timeout=300):
                     text = (await candidate_cta.text_content() or "").strip()
-                    if "submit vacancy" in text.lower() or "submit cv" in text.lower():
+                    if any(bad in text.lower() for bad in ["submit vacancy", "submit cv", "terms of", "cookie"]):
                         continue
                     cta = candidate_cta
                     break
             except Exception:
                 continue
 
+        # Tier 2: Fallback to href containing apply or QA attributes
         if cta is None:
-            # Fallback to href containing apply or QA attributes
             fallback_cta = current_page.locator(
-                'a[href*="apply" i]:visible, [data-automation-id="apply-button"]:visible, [data-qa="apply-button"]:visible, .application_button:visible'
+                'a[href*="apply" i]:visible, a[href*="application" i]:visible, [data-automation-id="apply-button"]:visible, [data-qa="apply-button"]:visible, .application_button:visible, button[id*="apply" i]:visible, a[id*="apply" i]:visible'
             ).first
             try:
-                if await fallback_cta.is_visible(timeout=1500):
+                if await fallback_cta.is_visible(timeout=1000):
                     text = (await fallback_cta.text_content() or "").strip()
-                    if not ("submit vacancy" in text.lower() or "submit cv" in text.lower()):
+                    if not any(bad in text.lower() for bad in ["submit vacancy", "submit cv", "terms of", "cookie"]):
                         cta = fallback_cta
+            except Exception:
+                pass
+
+        # Tier 3: Intermediate progression CTAs (for multi-hop transitions like "Continue to application", "Proceed", "Go to form")
+        if cta is None and hop >= 2:
+            inter_locators = current_page.locator("a:visible, button:visible").filter(has_text=_INTERMEDIATE_NAV_REGEX)
+            try:
+                if await inter_locators.count() > 0 and await inter_locators.first.is_visible(timeout=1000):
+                    cta = inter_locators.first
             except Exception:
                 pass
 
@@ -272,9 +389,24 @@ async def open_application(
         cta_href = await cta.get_attribute("href")
         log.info("open_application.clicking_cta", hop=hop, text=cta_text, href=cta_href)
 
+        # If CTA is an in-page hash anchor (e.g. #apply, #application), click and verify if form expanded
+        if cta_href and cta_href.startswith("#") and len(cta_href) > 1:
+            try:
+                await cta.scroll_into_view_if_needed(timeout=1000)
+                await cta.click(force=True, timeout=2000)
+                await current_page.wait_for_timeout(1500)
+                await dismiss_overlays(current_page)
+                if await _is_application_form_present(current_page):
+                    log.info("open_application.form_confirmed_via_hash_anchor", hop=hop, anchor=cta_href)
+                    return current_page
+            except Exception as anchor_err:
+                log.warning("open_application.anchor_click_failed", error=str(anchor_err))
+
         # Handle potential popup / new tab
         context = current_page.context
+        pages_before = set(context.pages)
         navigated = False
+
         try:
             async with context.expect_page(timeout=3500) as new_page_info:
                 await cta.click(force=True, timeout=3000)
@@ -284,16 +416,26 @@ async def open_application(
             navigated = True
             log.info("open_application.switched_to_new_tab", url=current_page.url)
         except Exception:
-            pass
+            # Fallback: check if context opened a new page despite expect_page timing out
+            new_pages = [p for p in context.pages if p not in pages_before]
+            if new_pages:
+                current_page = new_pages[-1]
+                await current_page.wait_for_load_state("domcontentloaded")
+                navigated = True
+                log.info("open_application.detected_new_tab_in_context", url=current_page.url)
 
         if not navigated:
             if cta_href and not cta_href.startswith("#") and not cta_href.startswith("javascript:"):
                 target_url = urljoin(current_page.url, cta_href)
-                log.info("open_application.navigating_href", target_url=target_url)
-                try:
-                    await current_page.goto(target_url, timeout=settings.nav_timeout_ms, wait_until="domcontentloaded")
-                except Exception as e:
-                    log.warning("open_application.href_goto_failed", error=str(e))
+                target_clean = target_url.split("#")[0].rstrip("/")
+                if target_clean not in visited_urls:
+                    log.info("open_application.navigating_href", target_url=target_url)
+                    try:
+                        await current_page.goto(target_url, timeout=settings.nav_timeout_ms, wait_until="domcontentloaded")
+                    except Exception as e:
+                        log.warning("open_application.href_goto_failed", error=str(e))
+                        await cta.click(force=True, timeout=3000)
+                else:
                     await cta.click(force=True, timeout=3000)
             else:
                 try:
