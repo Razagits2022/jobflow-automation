@@ -110,6 +110,11 @@ class Settings(BaseSettings):
         description="Max concurrent Arq jobs. Tune to ~1 browser per 2 GB RAM.",
         ge=1,
     )
+    worker_job_timeout: int = Field(
+        default=300,
+        description="Max execution time per Arq job in seconds (default 300s / 5 minutes).",
+        ge=30,
+    )
     nav_timeout_ms: int = Field(
         default=30_000,
         description="Playwright navigation timeout in milliseconds.",

@@ -178,5 +178,5 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(clean_redis_url(settings.redis_url))
     max_jobs = settings.worker_concurrency
-    job_timeout = 180  # 3 minutes max per job
+    job_timeout = settings.worker_job_timeout  # configurable, default 300s (5 minutes)
     keep_result = 3600  # keep job results for 1 hour

@@ -380,6 +380,13 @@ async def run_application(run_id: uuid.UUID) -> None:
         artifact_label = "validation_error"
         bound_log.warning("pipeline.validation_failed", reason=error_reason)
 
+    except asyncio.CancelledError:
+        final_status = RunStatus.FAILED
+        error_reason = "Job timed out (exceeded worker execution limit)"
+        artifact_label = "timeout"
+        bound_log.warning("pipeline.cancelled_by_timeout", reason=error_reason)
+        raise
+
     except Exception as exc:  # noqa: BLE001
         final_status = RunStatus.FAILED
         error_reason = f"{type(exc).__name__}: {exc}"
