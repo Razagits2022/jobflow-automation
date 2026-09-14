@@ -9,12 +9,14 @@ Each task:
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
 from arq.connections import RedisSettings
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.automation.errors import RunStatus
 from app.automation.pipeline import run_application as _run_pipeline
@@ -61,6 +63,24 @@ async def run_application(ctx: dict[str, Any], run_id: str) -> None:
         bound_log.info("worker.task_started")
         await _run_pipeline(run_uuid)
         bound_log.info("worker.task_finished")
+
+    except asyncio.CancelledError:
+        # Arq's job_timeout fires this. Mark FAILED then re-raise so Arq
+        # doesn't think the job is still running.
+        bound_log.warning("worker.task_cancelled_by_timeout")
+        try:
+            async with AsyncSessionLocal() as session:
+                run = await session.get(ApplicationRun, run_uuid)
+                if run is not None and run.status in (
+                    RunStatus.QUEUED.value,
+                    RunStatus.RUNNING.value,
+                ):
+                    run.status = RunStatus.FAILED.value
+                    run.error_reason = "Timed out (exceeded worker job_timeout)"
+                    await session.commit()
+        except Exception as db_exc:  # noqa: BLE001
+            bound_log.error("worker.cancel_status_write_failed", error=str(db_exc))
+        raise  # re-raise so Arq/asyncio handle cancellation properly
 
     except Exception as exc:  # noqa: BLE001
         # Safety net: log the error but do not re-raise.
@@ -110,9 +130,34 @@ async def _is_duplicate(run_id: uuid.UUID) -> bool:
 
 
 async def startup(ctx: dict[str, Any]) -> None:
-    """Worker startup hook: configure logging."""
+    """Worker startup hook: configure logging and reconcile orphaned runs."""
     configure_logging()
     log.info("worker.started", concurrency=settings.worker_concurrency)
+
+    # Reconcile orphans: any RUNNING/QUEUED row older than 15 minutes must be
+    # from a previous worker process that died mid-job. Mark FAILED so the
+    # dashboard is accurate.
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = (
+                update(ApplicationRun)
+                .where(
+                    ApplicationRun.status.in_([RunStatus.RUNNING.value, RunStatus.QUEUED.value]),
+                    ApplicationRun.updated_at < cutoff,
+                )
+                .values(
+                    status=RunStatus.FAILED.value,
+                    error_reason="Orphaned by previous worker crash or spin-down",
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            rowcount = getattr(result, "rowcount", 0)
+            if rowcount:
+                log.warning("worker.reconciled_orphaned_runs", count=rowcount)
+    except Exception as exc:  # noqa: BLE001
+        log.error("worker.orphan_reconciliation_failed", error=str(exc))
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -133,5 +178,5 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(clean_redis_url(settings.redis_url))
     max_jobs = settings.worker_concurrency
-    job_timeout = 600  # 10 minutes max per job
+    job_timeout = 180  # 3 minutes max per job
     keep_result = 3600  # keep job results for 1 hour
